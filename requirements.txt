@@ -1,0 +1,10 @@
+cloudpickle==2.2.1
+gymnasium==0.27.1
+gymnasium-notices==0.0.1
+jax-jumpy==0.2.0
+numpy==1.24.2
+panda-gym==3.0.4
+Pillow==9.4.0
+pybullet==3.2.5
+scipy==1.10.1
+typing_extensions==4.5.0
