@@ -257,22 +257,34 @@ class SorterTask(Task):
         # Generate new objects
         self.setup_target_objects()
 
+        self.score = 0
+        self.steps_remaining = self.initial_steps
+
     def get_obs(self) -> np.array:
         """
         get_obs will determine if any objects collided and need to be removed,
         and adjust the score as expected. It will then return an observation,
         which will be the simulation render from the camera angle.
         """
+        # Decrement our steps so that we can timeout if this takes
+        # too long
+        self.steps_remaining -= 1
         # Every step forward gets a penalty for time
         self.score += STEP_PENALTY
 
         # First check for floor collisions. Remove any colliding objects.
         floor_id = self.sim._bodies_idx["plane"]
-        for object in self.goal:
-            object_id = self.goal[object]["id"]
+        clear_keys: List[str] = []
+        for object_key in self.goal:
+            object_id = self.goal[object_key]["id"]
             if self.check_collision(object_id, floor_id):
                 self.score += FLOOR_PENALTY
                 self.sim.physics_client.removeBody(object_id)
+                clear_keys.append(object_key)
+
+        # Clear up removed goals
+        for key in clear_keys:
+            del self.goal[key]
 
         # Then check for collisions between the goals and a given target.
         # Remove any colliding targets.
@@ -283,7 +295,9 @@ class SorterTask(Task):
                 object_id = object["id"]
                 goal_id = self.sim._bodies_idx[goal]
 
-                if self.check_collision(object_id, goal_id):
+                if object_key not in clear_keys and self.check_collision(
+                    object_id, goal_id
+                ):
                     self.sim.physics_client.removeBody(object_id)
                     clear_keys.append(object_key)
 
@@ -322,13 +336,34 @@ class SorterTask(Task):
     def get_achieved_goal(self) -> np.ndarray:
         return np.array([len(self.goal) < 0], dtype="bool")
 
+    def is_terminated(self) -> bool:
+        """
+        is_terminated returns whether or not the episode is
+        in a terminal state; this can be due to:
+        1. All objects have been removed somehow from the env
+        2. The timer has hit 0
+
+        It is not an indication of success
+        """
+        if self.steps_remaining <= 0:
+            return True
+
+        return len(self.goal) <= 0
+
     def is_success(
         self,
         achieved_goal: np.ndarray,
         desired_goal: np.ndarray,
         info: Dict[str, Any] = ...,
     ) -> np.ndarray:
-        return np.array([len(self.goal) <= 0], dtype="bool")
+        """
+        is_success is a misnamed function, required as a layover
+        from using the panda_gym library. Instead it is best
+        to read it as an interface w/ is_terminated, and in no
+        way reads whether it was a success, since the episode can
+        end via timeout without doing the goals.
+        """
+        return np.array([self.is_terminated()], dtype="bool")
 
     def compute_reward(
         self,
