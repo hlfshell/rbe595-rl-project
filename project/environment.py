@@ -102,7 +102,7 @@ class SorterTask(Task):
         varying sizes, colors, and shapes. The shapes check to ensure
         that they do NOT collide with one another to start.
         """
-        base_size = 0.05
+        base_size = 0.025
         base_mass = 0.5
         base_box_volume = base_size**3
         base_cylinder_volume = pi * base_size**3  # h == r in base cylinder
