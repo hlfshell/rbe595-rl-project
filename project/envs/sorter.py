@@ -25,9 +25,8 @@ class SorterTask(Task):
 
         self.objects_count = objects_count
         self.img_size = img_size
+        self.object_opacity = 0.8
 
-        # Create our plane and table for the scenario
-        self.sim.create_table(length=1.1, width=0.8, height=0.4, x_offset=-0.3)
         self.sim.create_plane(z_offset=-0.4)
 
         # goal_positions will contain one of the three
@@ -45,6 +44,13 @@ class SorterTask(Task):
         # Size multiplier is the range of sizes allowed for
         # target objects
         self.size_multiplier: Tuple[float, float] = (0.5, 1.5)
+
+        self.task_init()
+
+
+    def task_init(self):
+        # Create our plane and table for the scenario
+        self.sim.create_table(length=1.1, width=0.8, height=0.4, x_offset=-0.3)
 
         # These position_limits are where the objects are allowed
         # to spawn. This reads as (x, y), where each axis
@@ -80,7 +86,7 @@ class SorterTask(Task):
             mass=0.0,
             ghost=False,
             position=self.sorter_positions[SORTING_THREE],
-            rgba_color=np.array([0, 0, 1.0, 0.4]),
+            rgba_color=np.array([0, 0, 1.0, 0.5]),
         )
         # Create the blocking bar
         self.sim.create_box(
@@ -246,7 +252,7 @@ class SorterTask(Task):
         ]
         color = choice(colors)
 
-        return np.array([color[0], color[1], color[2], 0.8])
+        return np.array([color[0], color[1], color[2], self.object_opacity])
 
     def get_random_object_position(self) -> np.array:
         """
@@ -443,6 +449,9 @@ class SorterEnv(RobotTaskEnv):
             "observation": observation,
             "achieved_goal": achieved_goal,
         }
+
+
+
 
 
 SORTING_ONE = "sorting_one"
