@@ -30,13 +30,11 @@ class SorterTask(Task):
         self.sim.create_table(length=1.1, width=0.8, height=0.4, x_offset=-0.3)
         self.sim.create_plane(z_offset=-0.4)
 
-        # Create our sorting areas
-        self._init_sorting_areas()
-
         # goal_positions will contain one of the three
         # preset strings (set below) w/ the resulting
         # starting position each goal is expected to be
         self.sorter_positions: Dict[str, np.array] = {}
+        self._init_sorting_areas()
 
         # objects is a dict w/ integer setting (0-4) for
         # the five objects created. The resulting dict
@@ -51,13 +49,14 @@ class SorterTask(Task):
         # These position_limits are where the objects are allowed
         # to spawn. This reads as (x, y), where each axis
         # in turn is a tuple of min/max placement.
-        self.position_limits: Tuple[Tuple[float, float]] = ((-0.2, 0.2), (-0.2, 0.2))
+        self.object_position_limits: Tuple[Tuple[float, float]] = ((-0.2, 0.2), (-0.2, 0.2))
 
     def _init_sorting_areas(self):
         self.sorter_positions = {
             SORTING_ONE: np.array([-0.25, -0.2, 0.01]),
             SORTING_TWO: np.array([-0.25, 0.00, 0.01]),
             SORTING_THREE: np.array([-0.25, 0.2, 0.01]),
+            "blocker": np.array([-0.2, 0.0, 0.01])
         }
         self.sim.create_box(
             body_name=SORTING_ONE,
@@ -83,6 +82,15 @@ class SorterTask(Task):
             position=self.sorter_positions[SORTING_THREE],
             rgba_color=np.array([0, 0, 1.0, 0.4]),
         )
+        # Create the blocking bar
+        self.sim.create_box(
+            body_name="blocker",
+            half_extents=np.array([0.01, 0.3, 0.005]),
+            mass=0.0,
+            ghost=False,
+            position=self.sorter_positions["blocker"],
+            rgba_color=np.array([0.0, 0.0, 0.0, 0.8]),
+        )
 
     def set_sorter_positions(self):
         """
@@ -93,7 +101,7 @@ class SorterTask(Task):
             self.sim.set_base_pose(
                 sorter,
                 position=self.sorter_positions[sorter],
-                orietnation=np.array([0.0, 0.0, 0.0, 1.0]),
+                orientation=np.array([0.0, 0.0, 0.0, 1.0]),
             )
 
     def setup_target_objects(self):
@@ -245,8 +253,8 @@ class SorterTask(Task):
         get_random_object_position returns a random np.array of an object's
         permissions within the permissive bounds set at instantiation.
         """
-        x = uniform(self.position_limits[0][0], self.position_limits[0][1])
-        y = uniform(self.position_limits[1][0], self.position_limits[1][1])
+        x = uniform(self.object_position_limits[0][0], self.object_position_limits[0][1])
+        y = uniform(self.object_position_limits[1][0], self.object_position_limits[1][1])
         z = 0.01
         return np.array([x, y, z])
 
