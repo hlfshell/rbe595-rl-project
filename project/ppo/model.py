@@ -10,14 +10,15 @@ from typing import Tuple, List
 from math import floor
 
 
-class PPOImageInput:
+class PPOImageInput(deque):
     def __init__(self, image_size: Tuple[int, int], images: int = 4):
-        self.deque = deque(maxlen=images)
+        super().__init__(self, maxlen=images)
 
         # Create a "blank" image for the initialization of this
         # deque
         for i in range(0, images):
-            pass
+            # self.deque.append(np.zeros(image_size + (3,)))
+            self.append(np.zeros(image_size + (3,)))
 
     def get_tensor(self):
         tensors: List[Tensor] = []
@@ -28,12 +29,6 @@ class PPOImageInput:
             tensors.append(tensor)
 
         return stack(tensors)
-
-    def __getitem__(self, index: int):
-        pass
-
-    def __setitem__(self, image: np.ndarray):
-        pass
 
 
 class PPOActor(Module):
