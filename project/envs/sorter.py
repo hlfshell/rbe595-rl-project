@@ -38,7 +38,6 @@ class SorterTask(Task):
         robot: Panda,
         objects_count: int = 5,
         img_size: Tuple[int, int] = (256, 256),
-        draw_object_position_limits: bool = False,
     ):
         if observation_type not in [OBSERVATION_POSES, OBSERVATION_IMAGE]:
             raise Exception(
@@ -78,11 +77,6 @@ class SorterTask(Task):
         # target objects
         self.size_multiplier: Tuple[float, float] = (0.5, 1.5)
 
-        # Whether or not to draw the tracking limit area. This area is the
-        # offset used to convert the object and end effector positions from
-        # raw x,y,z to (0-1) for each axis.
-        self.draw_object_position_limits: bool = draw_object_position_limits
-
         self.task_init()
 
     def task_init(self):
@@ -95,28 +89,6 @@ class SorterTask(Task):
         self.object_position_limits: Tuple[Tuple[float, float]] = (
             (-0.2, 0.2),
             (-0.2, 0.2),
-        )
-
-        # object_tracking_limits is the range of along each axis
-        # x, y, and z that objects will be tracked for the
-        # OBSERVATION_POSES observation type. Anything beyond this will
-        # be reported as the min/max accordingly. It's defined manually
-        # as essentially a rectangular field in the space.
-        self.object_tracking_limits: Tuple[Tuple[float, float]] = (
-            (-0.5, 0.5),  # x
-            (-0.5, 0.5),  # y
-            (-0.5, 0.5),  # z
-        )
-        x_diff = self.object_tracking_limits[0][1] - self.object_tracking_limits[0][0]
-        y_diff = self.object_tracking_limits[1][1] - self.object_tracking_limits[1][0]
-        z_diff = self.object_tracking_limits[2][1] - self.object_tracking_limits[2][0]
-        self.sim.create_box(
-            body_name="object_tracking_limits",
-            half_extents=np.array([x_diff, y_diff, z_diff]),
-            mass=0.0,
-            ghost=True,
-            position=np.array([0.0, 0.0, 0.0]),
-            rgba_color=np.array([1.0, 0.0, 0.0, 0.1]),
         )
 
     def _init_sorting_areas(self):
@@ -426,10 +398,12 @@ class SorterTask(Task):
         """
         # The size of this vector is determined by the number of objects expected
         pose_values = 12
+        # End effector values
+        ee_values = 6
         # The length of our vector is (pose_values + 2 (identity, size)) for each
         # object, pose_values for the end effector, and one additional value for
         # the gripper finger state (distance between fingers)
-        size = (len(self.goal) * (pose_values + 2)) + pose_values + 1
+        size = (len(self.goal) * (pose_values + 2)) + ee_values + 1
         observation: np.array = np.zeros((size,), dtype="float32")
 
         index = 0
@@ -440,49 +414,25 @@ class SorterTask(Task):
                 continue
 
             pose = self.get_object_pose(object)
-
-            # Convert the (x,y,z) position to (0,1) range with then
-            pose[0:3] = self._convert_position_to_within_bounds(pose[0:3])
-
             observation[index * 12 : (index + 1) * 12] = pose
             index += 1
 
         # Get the end effector position
         ee_position = self.robot.get_ee_position()
-        ee_position = self._convert_position_to_within_bounds(ee_position)
-        ee_rotation = 0.0  # self.robot.get_joint_angle()
+        # ee_rotation = 0.0  # self.robot.get_joint_angle()
         ee_velocity = self.robot.get_ee_velocity()
-        ee_angulary_velocity = 0.0
+        # ee_angulary_velocity = 0.0
         fingers_width = self.robot.get_fingers_width()
-        ee_index = index * 12 * len(self.goal)
-        # observation[ee_index : ee_index + 3] = ee_position
+        ee_index = pose_values * len(self.goal)
+        print(observation.size, ee_index, ee_position)
+        observation[ee_index : ee_index + 3] = ee_position
         # observation[ee_index + 3 : ee_index + 6] = ee_rotation
-        # observation[ee_index + 6 : ee_index + 9] = ee_velocity
+        observation[ee_index + 3 : ee_index + 6] = ee_velocity
         # observation[ee_index + 9 : ee_index + 12] = ee_angulary_velocity
-        # observation[ee_index + 12] = fingers_width
+        observation[ee_index + 6] = fingers_width
+        print("obs", observation)
 
         return observation
-
-    def _convert_position_to_within_bounds(self, position: np.array) -> np.array:
-        """
-        _convert_position_to_within_bounds will convert the position to be
-            relative within the bounds of the object tracking limits in the
-            range of (0,1)
-        """
-        position[0] = max(
-            self.object_tracking_limits[0][0],
-            min(position[0], self.object_tracking_limits[0][1]),
-        )
-        position[1] = max(
-            self.object_tracking_limits[1][0],
-            min(position[1], self.object_tracking_limits[1][1]),
-        )
-        position[2] = max(
-            self.object_tracking_limits[2][0],
-            min(position[2], self.object_tracking_limits[2][1]),
-        )
-
-        return position.astype(np.float32)
 
     def _get_img(self) -> np.array:
         """
@@ -569,7 +519,6 @@ class SorterEnv(RobotTaskEnv):
         renderer: str = "OpenGL",
         render_width: int = 720,
         render_height: int = 480,
-        draw_object_position_limits: bool = False,
     ) -> None:
         if observation_type not in [OBSERVATION_IMAGE, OBSERVATION_POSES]:
             raise ValueError("observation_type must be one of either images or poses")
@@ -585,13 +534,7 @@ class SorterEnv(RobotTaskEnv):
             base_position=np.array([-0.6, 0.0, 0.0]),
             control_type=control_type,
         )
-        task = SorterTask(
-            sim,
-            observation_type,
-            robot,
-            objects_count=objects_count,
-            draw_object_position_limits=draw_object_position_limits,
-        )
+        task = SorterTask(sim, observation_type, robot, objects_count=objects_count)
         super().__init__(
             robot,
             task,
