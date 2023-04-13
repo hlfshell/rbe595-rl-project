@@ -120,13 +120,18 @@ class PPOTrainer:
         self.critic.loadf(f"{folder}/models/critic.pth")
 
     def train(self):
-        
-        
+
+        tpb = 0  # timesteps per this batch
+        while tpb < self.state.timesteps_per_batch:
+            tpb += 1
+
+            rewards
 
         obs, _ = self.env.reset()
-        done = False for ep_t in range(self.max_timesteps_per_episode):
-        
-        action = self.env.action_space.sample()
-        obs, reward, terminated, truncated, info = self.env.step(action)
-        if done:
-            break
+        done = False
+
+        for ep_t in range(self.max_timesteps_per_episode):
+            action = self.env.action_space.sample()
+            obs, reward, terminated, truncated, info = self.env.step(action)
+            if done:
+                break
