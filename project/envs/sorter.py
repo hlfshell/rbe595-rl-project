@@ -380,9 +380,9 @@ class SorterTask(Task):
 
                 if self.check_collision(object_id, goal_id):
                     self.sim.physics_client.removeBody(object_id)
-                    self.goals[object_key].removed = True
+                    self.goal[object_key].removed = True
 
-                    if CORRECT_SORTS[goal] == object["shape"]:
+                    if CORRECT_SORTS[goal] == object.shape:
                         self.score += SORT_REWARD
                     else:
                         self.score += WRONG_SORT_REWARD
