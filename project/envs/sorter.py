@@ -317,16 +317,8 @@ class SorterTask(Task):
         get_obs will determine if any objects collided and need to be removed,
         and adjust the score as expected. It will then return an observation,
         which, depending on the observation type, will be:
-            OBSERVATION_POSES: will be a series of values for the raw (x, y, z, theta,
-                phi, psi) pose of the object, as well as an identity (type of shape),
-                and size(0-1) for min/max size, and the pose of the robot's end
-                effector, and a 0-1 value for its gripper open/close state. An
-                example of the return would be:
-                [[x, y, z, theta, phi, psi,
-                  xd, yd, zd, thetad, phid, psid, <~ velocities
-                identity, size] (times # of set objects), ...,
-                (ee_x, ee_y, ee_z, ee_theta, ee_phi, ee_psi),
-                gripper_status]
+            OBSERVATION_POSES: will be a series of values. See _get_obs_poses
+                for an explanation of this output.
             OBSERVATION_IMAGE: will be the simulation render from the camera angle.
         """
         # Decrement our steps so that we can timeout if this takes
