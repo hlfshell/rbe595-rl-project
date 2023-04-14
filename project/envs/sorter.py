@@ -1,3 +1,4 @@
+import math
 from math import pi
 from random import choice, uniform
 from typing import Any, Dict, Tuple
@@ -404,7 +405,7 @@ class SorterTask(Task):
         shape_values = 3
         size_values = 3
         # End effector values
-        ee_values = 6
+        ee_values = 12
         finger_values = 1
         # The length of our vector is (pose_values + (identity, size)) for each
         # object, pose_values for the end effector, and one additional value for
@@ -442,19 +443,45 @@ class SorterTask(Task):
 
         # Get the end effector position
         ee_position = self.robot.get_ee_position()
-        # ee_rotation = 0.0  # self.robot.get_joint_angle()
+        ee_rotation_quaternion = self.sim.get_link_orientation(
+            self.robot.body_name, self.robot.ee_link
+        )
+        ee_rotation = self._quaternion_to_euler(ee_rotation_quaternion)
         ee_velocity = self.robot.get_ee_velocity()
+        ee_rotational_velocity = self.sim.get_link_angular_velocity(
+            self.robot.body_name, self.robot.ee_link
+        )
 
         # ee_angulary_velocity = 0.0
         fingers_width = self.robot.get_fingers_width()
         ee_index = (pose_values + shape_values + size_values) * len(self.goal)
         observation[ee_index : ee_index + 3] = ee_position
-        # observation[ee_index + 3 : ee_index + 6] = ee_rotation
-        observation[ee_index + 3 : ee_index + 6] = ee_velocity
-        # observation[ee_index + 9 : ee_index + 12] = ee_angulary_velocity
-        observation[ee_index + 6] = fingers_width
+        observation[ee_index + 3 : ee_index + 6] = ee_rotation
+        observation[ee_index + 6 : ee_index + 9] = ee_velocity
+        observation[ee_index + 9 : ee_index + 12] = ee_rotational_velocity
+        observation[ee_index + 12] = fingers_width
 
         return observation
+
+    def _quaternion_to_euler(self, quaternion: np.array):
+        """
+        _quaternion_to_euler will convert a quaternion to euler angless
+        """
+        x, y, z, w = quaternion
+        t0 = 2.0 * (w * x + y * z)
+        t1 = 1.0 - 2.0 * (x * x + y * y)
+        X = math.atan2(t0, t1)
+
+        t2 = 2.0 * (w * y - z * x)
+        t2 = 1.0 if t2 > +1.0 else t2
+        t2 = -1.0 if t2 < -1.0 else t2
+        Y = math.asin(t2)
+
+        t3 = 2.0 * (w * z + x * y)
+        t4 = 1.0 - 2.0 * (y * y + z * z)
+        Z = math.atan2(t3, t4)
+
+        return np.array([X, Y, Z]).astype(np.float32)
 
     def _get_img(self) -> np.array:
         """
