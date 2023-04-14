@@ -18,6 +18,7 @@ class TargetObject:
         id: str,
         name: str,
         shape: int,
+        size: np.array,
         position: np.array,
         color: np.array,
         removed: bool = False,
@@ -25,6 +26,7 @@ class TargetObject:
         self.id = id
         self.name = name
         self.shape = shape
+        self.size = size
         self.position = position
         self.color = color
         self.removed = removed
@@ -176,6 +178,7 @@ class SorterTask(Task):
                     z = base_size * uniform(
                         self.size_multiplier[0], self.size_multiplier[1]
                     )
+                    size = np.array([x, y, z]).astype(np.float32)
 
                     volume = x * y * z
                     mass_multiplier = volume / base_box_volume
@@ -195,6 +198,7 @@ class SorterTask(Task):
                     radius = base_size * uniform(
                         self.size_multiplier[0], self.size_multiplier[1]
                     )
+                    size = np.array([height, radius, 0.0]).astype(np.float32)
 
                     volume = pi * radius**2 * height
                     mass_multiplier = volume / base_cylinder_volume
@@ -212,6 +216,8 @@ class SorterTask(Task):
                     multiplier = uniform(
                         self.size_multiplier[0], self.size_multiplier[1]
                     )
+                    size = np.array([multiplier, 0.0, 0.0]).astype(np.float32)
+
                     self.sim.create_sphere(
                         body_name=name,
                         radius=base_size * multiplier,
@@ -246,7 +252,7 @@ class SorterTask(Task):
                 else:
                     break
 
-            self.goal[object] = TargetObject(id, name, shape, position, color)
+            self.goal[object] = TargetObject(id, name, shape, size, position, color)
 
     def check_collision(self, object1: str, object2: str) -> bool:
         """
@@ -391,19 +397,31 @@ class SorterTask(Task):
 
         [[x, y, z, theta, phi, psi,
           xd, yd, zd, thetad, phid, psid, <~ velocities
-        identity, size] (times # of set objects), ...,
+        [identity], [size]] (times # of set objects), ...,
         (ee_x, ee_y, ee_z, ee_theta, ee_phi, ee_psi,
         ee_xd, ee_yd, ee_zd, ee_thetad, ee_phid, ee_psid), # <~ velocities
         gripper_status]
+
+        Note that the identity is a one-hot encoded list of shape [CUBE, CYLINDER,
+        SPHERE] and that size is a three value array of varying meaning based
+        on size: [x, y, z] for CUBE, [radius, height] for CYLINDER, [radius]
+        for SPHERE. Unused values are 0.0.
         """
         # The size of this vector is determined by the number of objects expected
         pose_values = 12
+        shape_values = 3
+        size_values = 3
         # End effector values
         ee_values = 6
-        # The length of our vector is (pose_values + 2 (identity, size)) for each
+        finger_values = 1
+        # The length of our vector is (pose_values + (identity, size)) for each
         # object, pose_values for the end effector, and one additional value for
         # the gripper finger state (distance between fingers)
-        size = (len(self.goal) * (pose_values + 2)) + ee_values + 1
+        size = (
+            (len(self.goal) * (pose_values + shape_values + size_values))
+            + ee_values
+            + finger_values
+        )
         observation: np.array = np.zeros((size,), dtype="float32")
 
         index = 0
@@ -414,23 +432,35 @@ class SorterTask(Task):
                 continue
 
             pose = self.get_object_pose(object)
-            observation[index * 12 : (index + 1) * 12] = pose
+            object_index = index * (pose_values + shape_values + size_values)
+            observation[object_index : object_index + pose_values] = pose
+
+            # The shape is a one hot encoded vector of [CUBE, CYLINDER, SPHERE]
+            if object.shape == CUBE:
+                shape_type = [1, 0, 0]
+            elif object.shape == CYLINDER:
+                shape_type = [0, 1, 0]
+            elif object.shape == SPHERE:
+                shape_type = [0, 0, 1]
+            shapes_index = object_index + pose_values
+            observation[shapes_index : shapes_index + shape_values] = shape_type
+            size_index = shapes_index + shape_values
+            observation[size_index : size_index + size_values] = object.size
             index += 1
 
         # Get the end effector position
         ee_position = self.robot.get_ee_position()
         # ee_rotation = 0.0  # self.robot.get_joint_angle()
         ee_velocity = self.robot.get_ee_velocity()
+
         # ee_angulary_velocity = 0.0
         fingers_width = self.robot.get_fingers_width()
-        ee_index = pose_values * len(self.goal)
-        print(observation.size, ee_index, ee_position)
+        ee_index = (pose_values + shape_values + size_values) * len(self.goal)
         observation[ee_index : ee_index + 3] = ee_position
         # observation[ee_index + 3 : ee_index + 6] = ee_rotation
         observation[ee_index + 3 : ee_index + 6] = ee_velocity
         # observation[ee_index + 9 : ee_index + 12] = ee_angulary_velocity
         observation[ee_index + 6] = fingers_width
-        print("obs", observation)
 
         return observation
 
