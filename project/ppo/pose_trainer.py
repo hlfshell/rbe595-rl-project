@@ -224,10 +224,11 @@ class PPOPoseTrainer:
         rewards = rewards[0 : self.timesteps_per_batch]
         terminateds = terminateds[0 : self.timesteps_per_batch]
 
-        V = self.critic(observations).detach()
+        V = self.critic(observations).detach().squeeze()
         print("V", V, V.shape)
         discounted_rewards = self.calculate_rewards_to_go(rewards, episode_lengths)
         print("discounted rewards", discounted_rewards)
+        print(Tensor(discounted_rewards), Tensor(discounted_rewards).shape)
         A_k = Tensor(discounted_rewards) - V.detach()
         print("A_k", A_k, A_k.shape)
         normalized_advantage = (A_k - A_k.mean()) / (A_k.std() + 1e-10)
@@ -235,6 +236,7 @@ class PPOPoseTrainer:
         print("A_k.mean()", A_k.mean())
         print("A_k.std()", A_k.std())
         print("A_k - A_k.mean()", A_k - A_k.mean())
+        # raise "stopping"
 
         # Calculate the advantage for these sessions
         # returns, advantages = self.calculate_advantage(rewards, qs, terminated)
