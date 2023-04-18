@@ -447,6 +447,8 @@ class SorterTask(Task):
             self.robot.body_name, self.robot.ee_link
         )
         ee_rotation = self._quaternion_to_euler(ee_rotation_quaternion)
+        # print("rot", ee_rotation)
+        # print("rot other", self.sim.get_base_rotation(self.robot.ee_link))
         ee_velocity = self.robot.get_ee_velocity()
         ee_rotational_velocity = self.sim.get_link_angular_velocity(
             self.robot.body_name, self.robot.ee_link
@@ -613,6 +615,9 @@ class SorterEnv(RobotTaskEnv):
             "observation": observation,
             "achieved_goal": achieved_goal,
         }
+
+    def get_obs(self) -> np.ndarray:
+        return self.task.get_obs().astype(np.float32)
 
 
 SORTING_ONE = "sorting_one"
