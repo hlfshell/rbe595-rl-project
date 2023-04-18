@@ -31,7 +31,7 @@ class PPOImageInput(deque):
         return stack(tensors)
 
 
-class PPOActor(Module):
+class PPOImageActor(Module):
     def __init__(
         self,
         img_size: Tuple[int, int],
@@ -90,7 +90,7 @@ class PPOActor(Module):
             Tanh(),
         )
 
-        # Similarly, when we calcultae the resulting sigma, we hope
+        # Similarly, when we calculate the resulting sigma, we hope
         # we need values to fall within 0 to 1.
         self.sigma_model = Sequential(
             Linear(128, 64),
@@ -117,7 +117,7 @@ class PPOActor(Module):
         self.load_state_dict(torch.load(filepath))
 
 
-class PPOCritic(Module):
+class PPOImageCritic(Module):
     def __init__(
         self,
         img_size: Tuple[int, int],
@@ -138,7 +138,7 @@ class PPOCritic(Module):
         # instead be 8 outputs - torques for each of 7 joints and the gripper
         self.action_space_size = 4 if self.control_type == "ee" else 8
 
-        super(PPOCritic, self).__init__()
+        super(PPOImageCritic, self).__init__()
 
         self.__initialize_model__()
 

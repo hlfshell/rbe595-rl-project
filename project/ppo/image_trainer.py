@@ -1,4 +1,4 @@
-from project.ppo.model import PPOActor, PPOCritic, PPOImageInput
+from project.ppo.image_model import PPOImageActor, PPOImageCritic, PPOImageInput
 from panda_gym.envs.core import RobotTaskEnv
 import numpy as np
 
