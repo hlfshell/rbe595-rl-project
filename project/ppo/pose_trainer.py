@@ -43,7 +43,7 @@ class PPOPoseTrainer:
         actor: PPOPoseActor,
         critic: PPOPoseCritic,
         total_timesteps: int,
-        timesteps_per_batch: int = 1,
+        timesteps_per_batch: int = 10,
         max_observation_memory: int = 1_000_000,
         save_folder: str = "inprogress/ppo",
     ):
@@ -224,10 +224,17 @@ class PPOPoseTrainer:
         rewards = rewards[0 : self.timesteps_per_batch]
         terminateds = terminateds[0 : self.timesteps_per_batch]
 
-        V = self.critic(observations)
+        V = self.critic(observations).detach()
+        print("V", V, V.shape)
         discounted_rewards = self.calculate_rewards_to_go(rewards, episode_lengths)
+        print("discounted rewards", discounted_rewards)
         A_k = Tensor(discounted_rewards) - V.detach()
+        print("A_k", A_k, A_k.shape)
         normalized_advantage = (A_k - A_k.mean()) / (A_k.std() + 1e-10)
+        print("normalized advantage", normalized_advantage, normalized_advantage.shape)
+        print("A_k.mean()", A_k.mean())
+        print("A_k.std()", A_k.std())
+        print("A_k - A_k.mean()", A_k - A_k.mean())
 
         # Calculate the advantage for these sessions
         # returns, advantages = self.calculate_advantage(rewards, qs, terminated)
@@ -268,7 +275,9 @@ class PPOPoseTrainer:
             # π_θ_k and our current model is creating π_θ. We
             # use the log probabilities and subtract, then raise
             # e to the power of the results to simplify the math
-            # for back propagation/gradient descent
+            # for back propagation/gradient descent.
+            print("current_log_probs", current_log_probs, current_log_probs.shape)
+            print("log_probs", log_probs, log_probs.shape)
             ratios = torch.exp(current_log_probs - log_probs)
 
             # Now we need to calculate the actor's loss.
@@ -281,6 +290,15 @@ class PPOPoseTrainer:
             # to minimize the loss with SGD while maximizing our
             # rewards. We the ntake the mean of this value to find
             # the loss of this entire batch.
+            print("ratio", ratios, ratios.shape)
+            print(
+                "normalized_advantage", normalized_advantage, normalized_advantage.shape
+            )
+            print("ratios * normalized_advantage", ratios * normalized_advantage)
+            print(
+                "torch.clamp(ratios, 1 - self.ε, 1 + self.ε) * normalized_advantage",
+                torch.clamp(ratios, 1 - self.ε, 1 + self.ε) * normalized_advantage,
+            )
             actor_loss = -torch.min(
                 ratios * normalized_advantage,
                 torch.clamp(ratios, 1 - self.ε, 1 + self.ε) * normalized_advantage,
