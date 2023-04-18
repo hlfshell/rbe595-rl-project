@@ -146,6 +146,7 @@ class PPOPoseTrainer:
         observations: List[np.array] = []
         action_distributions: List[Normal] = []
         actions: List[np.array] = []
+        episode_lengths: List[int] = []
         rewards: List[int] = []
         qs: List[float] = []
         terminateds: List[bool] = []
@@ -175,8 +176,10 @@ class PPOPoseTrainer:
         # batch_rews.append(ep_rews)
 
         tpb = 0  # timesteps per this batch
+        steps_per_episode = 0
         while True:
             tpb += 1
+            steps_per_episode += 1
 
             observation = self.env.get_obs()
             action_distribution = self.actor(observation)
@@ -195,6 +198,9 @@ class PPOPoseTrainer:
             if terminated:
                 self.env.reset()
 
+                episode_lengths.append(steps_per_episode)
+                steps_per_episode = 0
+
                 # If we have finished the episode and have the number
                 # of timesteps we need for a batch, we stop our
                 # collection and move on to training
@@ -202,9 +208,12 @@ class PPOPoseTrainer:
                     break
 
         # Calculate our discounted rewards and advantage and normalized advantage
-        discounted_rewards, normalized_advantage = self.calculate_advantage(
-            rewards, qs, terminateds
-        )
+        # discounted_rewards, normalized_advantage = self.calculate_advantage(
+        #     rewards, qs, terminateds
+        # )
+
+        # discounted_rewards = self.calculate_rewards_to_go(rewards, episode_lengths)
+        # advantage = self.critic_model(observations).detach()
 
         # We only want timesteps_per_batch timesteps, but since we needed
         # to wait until we had a terminated episode at the end, we likely
@@ -215,15 +224,26 @@ class PPOPoseTrainer:
         rewards = rewards[0 : self.timesteps_per_batch]
         terminateds = terminateds[0 : self.timesteps_per_batch]
 
+        V = self.critic(observations)
+        discounted_rewards = self.calculate_rewards_to_go(rewards, episode_lengths)
+        A_k = Tensor(discounted_rewards) - V.detach()
+        normalized_advantage = (A_k - A_k.mean()) / (A_k.std() + 1e-10)
+
         # Calculate the advantage for these sessions
-        returns, advantages = self.calculate_advantage(rewards, qs, terminated)
+        # returns, advantages = self.calculate_advantage(rewards, qs, terminated)
 
         # Get the log probabilities of our action_distrbutions - the
         # log probability is easier to work with mathematically for
         # gradient descent and fixes some issues during training
-        log_probs: List[Tensor] = [
-            distribution.log_prob() for distribution in action_distributions
-        ]
+        print("here", len(action_distributions))
+        log_probs: List[Tensor] = []
+        for index in range(len(action_distributions)):
+            distribution = action_distributions[index]
+            action = Tensor(actions[index])
+            log_probs.append(distribution.log_prob(action))
+        # log_probs: List[Tensor] = [
+        #     distribution.log_prob() for distribution in action_distributions
+        # ]
 
         # We are now doing N epochs of training
         N = 5  # TODO make this a hyper parameter
@@ -232,11 +252,12 @@ class PPOPoseTrainer:
             # batch
             # TODO - make this a hyperparameter
             batch_size = 32
-            current_log_probs: List[Tensor] = []
+            current_log_probs: Tensor = Tensor()
             for batch in range(0, len(observations), batch_size):
                 distributions = self.actor(observations[batch : batch + batch_size])
-                for distribution in distributions:
-                    current_log_probs.append(distribution.log_prob())
+                actions = Tensor(actions[batch : batch + batch_size])
+                log_probs = distributions.log_prob(actions)
+                current_log_probs = torch.cat((current_log_probs, log_probs), dim=0)
 
             # We are calculating the ratio as defined by:
             #
