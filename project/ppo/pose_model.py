@@ -77,6 +77,8 @@ class PPOPoseActor(Module):
     def forward(self, input: Union[np.ndarray, Tensor]) -> Normal:
         if isinstance(input, np.ndarray):
             input_tensor: Tensor = torch.from_numpy(input.astype("float32"))
+        elif type(input) is list:
+            input_tensor: Tensor = torch.from_numpy(np.array(input).astype("float32"))
         else:
             input_tensor = input
 
@@ -146,6 +148,8 @@ class PPOPoseCritic(Module):
     def forward(self, input: np.ndarray) -> Tensor:
         if isinstance(input, np.ndarray):
             input_tensor: Tensor = torch.from_numpy(input.astype("float32"))
+        elif type(input) is list:
+            input_tensor: Tensor = torch.from_numpy(np.array(input).astype("float32"))
         else:
             input_tensor = input
 
