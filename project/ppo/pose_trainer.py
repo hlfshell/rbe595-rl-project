@@ -53,6 +53,8 @@ class PPOPoseTrainer:
 
         self.save_folder = save_folder
 
+        self.max_steps_per_episode = 100
+
         # Hyperparameters
         self.λ = 0.95
         self.γ = 0.99
@@ -193,12 +195,29 @@ class PPOPoseTrainer:
             rewards.append(reward)
             q: Tensor = self.critic(observation)
             qs.append(q.item())
+
+            # If the steps_per_episode is greater than the allowed
+            # self.max_steps_per_episode, we terminate the episode
+            # as a timeout
+            if steps_per_episode >= self.max_steps_per_episode:
+                terminated = True
             terminateds.append(terminated)
 
             if terminated:
-                self.env.reset()
+                print("terminated on", steps_per_episode, tpb)
+                # We penalize the reward returned on the final episode
+                # by the total steps for the episode
+                rewards[-1] -= steps_per_episode
+                print("rewards prior to cull", rewards)
 
+                # We track the length of the episode for calculating
+                # the discounted rewards later; it allows us to easily
+                # index and isolate each individual episode within the
+                # batch.
                 episode_lengths.append(steps_per_episode)
+
+                # Reset for the next episode
+                self.env.reset()
                 steps_per_episode = 0
 
                 # If we have finished the episode and have the number
@@ -215,6 +234,8 @@ class PPOPoseTrainer:
         # discounted_rewards = self.calculate_rewards_to_go(rewards, episode_lengths)
         # advantage = self.critic_model(observations).detach()
 
+        discounted_rewards = self.calculate_rewards_to_go(rewards, episode_lengths)
+
         # We only want timesteps_per_batch timesteps, but since we needed
         # to wait until we had a terminated episode at the end, we likely
         # overshot this. Drop the extra episodes from all recorded data
@@ -222,11 +243,16 @@ class PPOPoseTrainer:
         action_distributions = action_distributions[0 : self.timesteps_per_batch]
         actions = actions[0 : self.timesteps_per_batch]
         rewards = rewards[0 : self.timesteps_per_batch]
+        discounted_rewards = discounted_rewards[0 : self.timesteps_per_batch]
         terminateds = terminateds[0 : self.timesteps_per_batch]
+
+        print("terminateds", terminateds)
+        print("observations size", len(observations), len(observations[0]))
+        print("rewards", rewards)
 
         V = self.critic(observations).detach().squeeze()
         print("V", V, V.shape)
-        discounted_rewards = self.calculate_rewards_to_go(rewards, episode_lengths)
+        # discounted_rewards = self.calculate_rewards_to_go(rewards, episode_lengths)
         print("discounted rewards", discounted_rewards)
         print(Tensor(discounted_rewards), Tensor(discounted_rewards).shape)
         A_k = Tensor(discounted_rewards) - V.detach()
@@ -246,16 +272,27 @@ class PPOPoseTrainer:
         # gradient descent and fixes some issues during training
         print("here", len(action_distributions))
         log_probs: List[Tensor] = []
+        # log_probs: Tensor = Tensor()
         for index in range(len(action_distributions)):
             distribution = action_distributions[index]
             action = Tensor(actions[index])
-            log_probs.append(distribution.log_prob(action))
+            log_probs.append(distribution.log_prob(action).detach().numpy())
+            # log_probs = torch.cat((log_probs, distribution.log_prob(action)), -1)
+        print(
+            "log probs prior to convert",
+            log_probs,
+            type(log_probs),
+            type(log_probs[0]),
+        )
+        log_probs = Tensor(log_probs)
+        print("first logprob", log_probs, log_probs.shape)
         # log_probs: List[Tensor] = [
         #     distribution.log_prob() for distribution in action_distributions
         # ]
 
         # We are now doing N epochs of training
         N = 5  # TODO make this a hyper parameter
+        log_probs_old = log_probs
         for _ in range(N):
             # We need our log_probabilities for our current epoch and our current
             # batch
@@ -265,8 +302,10 @@ class PPOPoseTrainer:
             for batch in range(0, len(observations), batch_size):
                 distributions = self.actor(observations[batch : batch + batch_size])
                 actions = Tensor(actions[batch : batch + batch_size])
-                log_probs = distributions.log_prob(actions)
-                current_log_probs = torch.cat((current_log_probs, log_probs), dim=0)
+                log_probs2 = distributions.log_prob(actions)
+                current_log_probs = torch.cat((current_log_probs, log_probs2), dim=0)
+
+            print("we still equal?", log_probs_old == log_probs)
 
             # We are calculating the ratio as defined by:
             #
@@ -296,6 +335,7 @@ class PPOPoseTrainer:
             print(
                 "normalized_advantage", normalized_advantage, normalized_advantage.shape
             )
+            print("normalized_advantage * ratios", normalized_advantage * ratios)
             print("ratios * normalized_advantage", ratios * normalized_advantage)
             print(
                 "torch.clamp(ratios, 1 - self.ε, 1 + self.ε) * normalized_advantage",

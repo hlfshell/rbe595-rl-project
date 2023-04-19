@@ -56,9 +56,9 @@ class SorterTask(Task):
 
         self.score: float = 0.0
 
-        self.initial_steps: int = 100
-        self.steps_remaining = self.initial_steps
-        self.steps_sort_extension = 10
+        # self.initial_steps: int = 100
+        # self.steps_remaining = self.initial_steps
+        # self.steps_sort_extension = 10
 
         self.objects_count: int = objects_count
         if observation_type == OBSERVATION_IMAGE:
@@ -311,7 +311,7 @@ class SorterTask(Task):
         self.setup_target_objects()
 
         self.score = 0
-        self.steps_remaining = self.initial_steps
+        # self.steps_remaining = self.initial_steps
 
     def get_obs(self) -> np.array:
         """
@@ -324,9 +324,9 @@ class SorterTask(Task):
         """
         # Decrement our steps so that we can timeout if this takes
         # too long
-        self.steps_remaining -= 1
+        # self.steps_remaining -= 1
         # Every step forward gets a penalty for time
-        self.score += STEP_PENALTY
+        # self.score += STEP_PENALTY
 
         # First check for floor collisions. Remove any colliding objects.
         floor_id = self.sim._bodies_idx["plane"]
@@ -358,7 +358,7 @@ class SorterTask(Task):
                     else:
                         self.score += WRONG_SORT_REWARD
 
-                    self.steps_remaining += self.steps_sort_extension
+                    # self.steps_remaining += self.steps_sort_extension
 
         # Ensure that each goal hasn't moved; this is a consequence of the
         # collision checking we do
@@ -521,8 +521,8 @@ class SorterTask(Task):
 
         It is not an indication of success
         """
-        if self.steps_remaining <= 0:
-            return True
+        # if self.steps_remaining <= 0:
+        #     return True
 
         return all(obj.removed for obj in self.goal.values())
 
@@ -637,7 +637,7 @@ CORRECT_SORTS = {
     SORTING_THREE: CUBE,
 }
 
-STEP_PENALTY = -1
+# STEP_PENALTY = -1
 FLOOR_PENALTY = -50
 WRONG_SORT_REWARD = 25
 SORT_REWARD = 100
