@@ -189,30 +189,39 @@ class TrainingState:
             self.rewards[start:end],
         )
 
-    def get_batch(self) -> List[EpisodeMemory]:
+    def get_batch(self) -> Tuple[np.array, np.array, np.array, np.array]:
         """
         get_batch retrieves a batch of data from our memory
         preserving grouping of episodes until the cutoff batch size
         """
-        batch: List[EpisodeMemory] = []
+        # observations, _, log_probabilities, rewards
+        observations: List[np.ndarray] = []
+        actions: List[np.ndarray] = []
+        log_probabilities: List[np.ndarray] = []
+        rewards: List[np.ndarray] = []
+
         batch_timesteps = 0
         chosen_episodes = []
         while batch_timesteps < self.timesteps_per_batch:
             # Get a random episode
-            episode_index = randint(0, len(self.episode_lengths))
+            episode_index = randint(0, len(self.episode_lengths) - 1)
             # Ensure that we don't choose the same episode twice
             if episode_index in chosen_episodes:
                 continue
             chosen_episodes.append(episode_index)
 
             # Get the episode
-            episode = self.get_episode(episode_index)
+            obs, acts, log_probs, rwds = self.get_episode(episode_index)
 
-            # Add the episode to the batch
-            batch.append(episode)
+            # Add the episode to the batches
+            observations.append(obs)
+            actions.append(acts)
+            log_probabilities.append(log_probs)
+            rewards.append(rwds)
+
             # The timesteps in the episode is the length of
             # any of its datums
-            batch_timesteps += len(episode[0])
+            batch_timesteps += len(obs)
 
         # Trim the batch if necessary - due to the way we
         # compiled the batch we should only need to trim the
@@ -221,17 +230,15 @@ class TrainingState:
             # Get the difference between the batch timesteps
             # and the desired timesteps
             difference = batch_timesteps - self.timesteps_per_batch
-            # Get the last episode
-            last_episode = batch[-1]
-            # Trim the last episode's datums accordingly
-            batch[-1] = (
-                last_episode[0][:-difference],
-                last_episode[1][:-difference],
-                last_episode[2][:-difference],
-                last_episode[3][:-difference],
-            )
 
-        return batch
+            # For each of our batched datums we remove a number of
+            # timesteps equal to our difference
+            observations = observations[:-difference]
+            actions = actions[:-difference]
+            log_probabilities = log_probabilities[:-difference]
+            rewards = rewards[:-difference]
+
+        return observations, actions, log_probabilities, rewards
 
     def memory_to_tensor(
         self, memory: EpisodeMemory

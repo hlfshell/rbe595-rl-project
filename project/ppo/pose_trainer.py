@@ -3,6 +3,7 @@ from project.ppo.pose_model import PPOPoseActor, PPOPoseCritic
 from panda_gym.envs.core import RobotTaskEnv
 from torch.distributions import Normal
 from torch import Tensor
+from torch.nn import MSELoss
 import numpy as np
 from project.ppo.pose_memory import TrainingState
 
@@ -203,13 +204,23 @@ class Trainer:
             * normalized_advantage,
         ).mean()
 
-        print("I made it this far I guess", actor_loss)
-
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
         self.actor_optimizer.step()
 
-        raise "we did it?"
+        # Now we do a training step for the critic
+
+        # Calculate what the critic current evaluates our states as.
+        # First we have the critic evaluate all observation states,
+        # then compare it ot the collected rewards over that time.
+        # We will convert our rewards into a known tensor
+        V = self.critic(observations)
+        reward_tensor = Tensor(rewards).unsqueeze(-1)
+        critic_loss = MSELoss()(V, reward_tensor)
+
+        self.critic_optimizer.zero_grad()
+        critic_loss.backward()
+        self.critic_optimizer.step()
 
         return actor_loss.item(), critic_loss.item()
 
