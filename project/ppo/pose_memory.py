@@ -1,0 +1,334 @@
+from __future__ import annotations
+from typing import Tuple, List
+from random import randint
+from torch import Tensor
+
+import torch
+import pickle
+import os
+
+import numpy as np
+
+"""
+EpisodeMemory is a tuple of the following:
+    - observations: List[np.array]
+    - actions: List[np.array]
+    - log_probabilities: List[np.array]
+    - rewards: List[float]
+
+    Note that the rewards is the calculated discounted
+    rewards, not the raw rewards.
+"""
+EpisodeMemory: Tuple[List[np.array], List[np.array], List[np.array], List[float]]
+
+
+class TrainingState:
+    def __init__(
+        self,
+        γ: float = 0.99,
+        λ: float = 0.95,
+        ε: float = 0.2,
+        α: float = 0.005,
+        epochs: int = 10_000,
+        max_observation_memory: int = 100_000,
+        episode_timestep_max: int = 10,
+        timesteps_per_batch: int = 100,
+        actor_epochs_per_batch: int = 5,
+        critic_epochs_per_batch: int = 5,
+        save_every_epochs: int = 5,
+    ):
+        # ================
+        # State management parameters
+        # ================
+
+        # max_memory represents the maximum number
+        # of timesteps we'll store during training.
+        # Once this is exceeded additional cleanup
+        # functionality will be handled
+        self.max_memory = max_observation_memory
+
+        # ================
+        # Trainer state
+        # ================
+
+        # timesteps is the current timesteps experienced
+        # across all of our rollouts
+        self.timesteps: int = 0
+
+        # epochs is the total number of
+        self.epochs: int = epochs
+
+        # epochs_completed is the number of epochs we've
+        # completed
+        self.epochs_completed: int = 0
+
+        # How many timesteps do we load into each batch
+        self.timesteps_per_batch = timesteps_per_batch
+
+        # How long will we let each episode run before terminating?
+        self.episode_timestep_max = episode_timestep_max
+
+        # How many epochs do we train the actor and critic
+        # during each epoch. Each epoch for a given batch is
+        # actually iterated on multiple times.
+        self.actor_epochs_per_batch = actor_epochs_per_batch
+        self.critic_epochs_per_batch = critic_epochs_per_batch
+
+        # rewards_all tracks all end of episode rewards for all
+        # time, outside of our batch memory, for tracking progress
+        # of the model throughout training
+        self.rewards_all: List[float] = []
+
+        # save_every_epochs is the number of epochs we wait
+        # before saving the current state of the model
+        self.save_every_epochs = save_every_epochs
+
+        # ================
+        # Trainer hyperparameters
+        # ================
+
+        # λ our smoothing constant
+        self.λ = 0.95
+
+        # γ is our discount factor for calculating rewards
+        self.γ = 0.99
+
+        # ε is our clipping factor for the PPO loss function
+        self.ε = 0.2
+
+        # learning_rate is the learning rate for our optimizer
+        self.α = 0.005
+
+        # ================
+        # Batch Memory
+        # ================
+
+        # observations are a list of states derived from
+        # our environment
+        self.observations: List[np.array] = []
+
+        # These are actions performed by our agent at
+        # the given timestep during exploration
+        self.actions: List[np.array] = []
+
+        # We need to track the log probabilities of each action
+        # for the given distribution at that time.
+        self.log_probabilities: List[np.array] = []
+
+        # rewards tracks the rewards of the given memory. Note
+        # that these rewards are discounted across the episode
+        # already
+        self.rewards: List[float] = []
+
+        # episode_lengths is key to our memory system. We
+        # wish to grab chunks in set episodes for similar
+        # behavior during training. This allows us to remove
+        # all data and retrieve in chunks of per-episode
+        # despite our simple appending of other data.
+        self.episode_lengths: List[int] = []
+
+    def remember(
+        self,
+        observations: List[np.array],
+        actions: List[np.array],
+        log_probabilities: List[np.array],
+        rewards: List[float],
+    ):
+        """
+        remember takes the output of a given episode and places it
+        into our trianing memory. If necessary, it handles unloading
+        the oldest episodes to make room
+        """
+        episode_timesteps = len(observations)
+
+        # Add the observations, actions, log probabilities, and rewards
+        # to our memory
+        self.observations.extend(observations)
+        self.actions.extend(actions)
+        self.log_probabilities.extend(log_probabilities)
+        self.rewards.extend(rewards)
+        self.rewards_all.append(rewards[-1])
+
+        # Add the episode length to our episode lengths
+        self.episode_lengths.append(episode_timesteps)
+
+        # Update the total timesteps
+        self.timesteps += episode_timesteps
+
+        # Ensure that our memory limit isn't surpassed
+        while len(self.observations) > self.max_memory:
+            self.unload_oldest_episode()
+
+    def unload_oldest_episode(self):
+        """
+        unload_oldest_episode removes the oldest episode from our memory
+        """
+        # Get the length of the oldest episode
+        oldest_episode_length = self.episode_lengths.pop(0)
+
+        # Remove the oldest episode's data from our memory
+        self.observations = self.observations[oldest_episode_length:]
+        self.actions = self.actions[oldest_episode_length:]
+        self.log_probabilities = self.log_probabilities[oldest_episode_length:]
+        self.rewards = self.rewards[oldest_episode_length:]
+
+    def get_episode(self, index: int) -> EpisodeMemory:
+        """
+        get_episode retrieves the episode at the given index
+        """
+        episode_length = self.episode_lengths[index]
+        # Get the start and end of the episode
+        start = sum(self.episode_lengths[:index])
+        end = start + episode_length
+
+        # Return the episode's data
+        return (
+            self.observations[start:end],
+            self.actions[start:end],
+            self.log_probabilities[start:end],
+            self.rewards[start:end],
+        )
+
+    def get_batch(self) -> List[EpisodeMemory]:
+        """
+        get_batch retrieves a batch of data from our memory
+        preserving grouping of episodes until the cutoff batch size
+        """
+        batch: List[EpisodeMemory] = []
+        batch_timesteps = 0
+        chosen_episodes = []
+        while batch_timesteps < self.timesteps_per_batch:
+            # Get a random episode
+            episode_index = randint(0, len(self.episode_lengths))
+            # Ensure that we don't choose the same episode twice
+            if episode_index in chosen_episodes:
+                continue
+            chosen_episodes.append(episode_index)
+
+            # Get the episode
+            episode = self.get_episode(episode_index)
+
+            # Add the episode to the batch
+            batch.append(episode)
+            # The timesteps in the episode is the length of
+            # any of its datums
+            batch_timesteps += len(episode[0])
+
+        # Trim the batch if necessary - due to the way we
+        # compiled the batch we should only need to trim the
+        # last episode
+        if batch_timesteps > self.timesteps_per_batch:
+            # Get the difference between the batch timesteps
+            # and the desired timesteps
+            difference = batch_timesteps - self.timesteps_per_batch
+            # Get the last episode
+            last_episode = batch[-1]
+            # Trim the last episode's datums accordingly
+            batch[-1] = (
+                last_episode[0][:-difference],
+                last_episode[1][:-difference],
+                last_episode[2][:-difference],
+                last_episode[3][:-difference],
+            )
+
+        return batch
+
+    def memory_to_tensor(
+        self, memory: EpisodeMemory
+    ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+        """
+        memory_to_tensor converts a given episode memory to a set of
+        tensors
+        """
+        # Convert the episode memory to a tensor
+        observations = Tensor(memory[0], dtype=torch.float32)
+        actions = Tensor(memory[1], dtype=torch.float32)
+        log_probabilities = Tensor.tensor(memory[2], dtype=torch.float32)
+        rewards = Tensor(memory[3], dtype=torch.float32)
+
+        return observations, actions, log_probabilities, rewards
+
+    def batch_to_tensor(
+        self, batch: List[EpisodeMemory]
+    ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+        """
+        batch_to_tensor converts a given batch to a set of tensors
+        for training
+        """
+        # Convert the batch to a tensor
+        observations = Tensor(batch[0], dtype=torch.float32)
+        actions = Tensor(batch[1], dtype=torch.float32)
+        log_probabilities = Tensor(batch[2], dtype=torch.float32)
+        rewards = Tensor(batch[3], dtype=torch.float32)
+
+        return observations, actions, log_probabilities, rewards
+
+    def save(self, path: str):
+        """
+        save saves the current state of the training
+        """
+
+        # First we create a dict of all possible data to save
+        data = {
+            "observations": self.observations,
+            "actions": self.actions,
+            "log_probabilities": self.log_probabilities,
+            "rewards": self.rewards,
+            "episode_lengths": self.episode_lengths,
+            "rewards_all": self.rewards_all,
+            "timesteps": self.timesteps,
+            "max_memory": self.max_memory,
+            "save_every_epochs": self.save_every,
+            "episode_timestep_max": self.episode_timestep_max,
+            "timesteps_per_batch": self.timesteps_per_batch,
+            "epochs": self.epochs,
+            "epochs_completed": self.epochs_completed,
+            "γ": self.γ,
+            "λ": self.λ,
+            "ε": self.ε,
+            "α": self.α,
+            "actor_epochs_per_batch": self.actor_epochs_per_batch,
+            "critic_epochs_per_batch": self.critic_epochs_per_batch,
+        }
+
+        # Ensure the path exists with appropriate subdirectories
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+
+        with open(path, "wb") as f:
+            pickle.dump(data, f)
+
+    @staticmethod
+    def Load(path: str) -> TrainingState:
+        """
+        Load loads a training state from a file and returns
+        the resulting training state
+        """
+        with open(path, "rb") as f:
+            data = pickle.load(f)
+
+        # Create a new training state
+        training_state = TrainingState(
+            data["γ"],
+            data["λ"],
+            data["ε"],
+            data["α"],
+            data["epochs"],
+            data["max_memory"],
+            data["episode_timestep_max"],
+            data["timesteps_per_batch"],
+            data["actor_epochs_per_batch"],
+            data["critic_epochs_per_batch"],
+            data["save_every_epochs"],
+        )
+
+        # Load the data from the file
+        training_state.observations = data["observations"]
+        training_state.actions = data["actions"]
+        training_state.log_probabilities = data["log_probabilities"]
+        training_state.rewards = data["rewards"]
+        training_state.episode_lengths = data["episode_lengths"]
+        training_state.rewards_all = data["rewards_all"]
+        training_state.timesteps = data["timesteps"]
+        training_state.epochs_completed = data["epochs_completed"]
+
+        return training_state

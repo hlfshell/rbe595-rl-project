@@ -1,368 +1,248 @@
+from __future__ import annotations
 from project.ppo.pose_model import PPOPoseActor, PPOPoseCritic
 from panda_gym.envs.core import RobotTaskEnv
 from torch.distributions import Normal
 from torch import Tensor
 import numpy as np
+from project.ppo.pose_memory import TrainingState
 
 import torch
 from pathlib import Path
 from typing import Tuple, List
 from collections import deque
 
-
-class TrainingState:
-    def __init__(
-        self,
-        timesteps: int,
-        max_observation_memory: int,
-        timesteps_per_batch: int,
-    ):
-        self.timesteps_total = timesteps
-        self.timestep: int = 0
-        self.timesteps_per_batch = timesteps_per_batch
-
-        self.image_size = image_size
-        self.images_per_input = images_per_input
-
-        self.observations: List[np.array] = deque(maxlen=max_observation_memory)
-
-        self.batch_actions: List[np.array] = deque(maxlen=max_observation_memory)
-
-        # batch_obs = []             # batch observations
-        # batch_acts = []            # batch actions
-        # batch_log_probs = []       # log probs of each action
-        # batch_rews = []            # batch rewards
-        # batch_rtgs = []            # batch rewards-to-go
-        # batch_lens = []            # episodic lengths in batch
+EpisodeMemory: Tuple[List[np.array], List[np.array], List[np.array], List[float]]
 
 
-class PPOPoseTrainer:
+class Trainer:
     def __init__(
         self,
         env: RobotTaskEnv,
         actor: PPOPoseActor,
         critic: PPOPoseCritic,
-        total_timesteps: int,
-        timesteps_per_batch: int = 10,
-        max_observation_memory: int = 1_000_000,
-        save_folder: str = "inprogress/ppo",
+        state: TrainingState,
     ):
         self.env = env
         self.actor = actor
         self.critic = critic
+        self.state = state
 
-        self.save_folder = save_folder
-
-        self.max_steps_per_episode = 100
-
-        # Hyperparameters
-        self.λ = 0.95
-        self.γ = 0.99
-        self.ε = 0.2
-        self.learning_rate = 0.005
-        self.total_timesteps = total_timesteps
-        self.timesteps_per_batch = timesteps_per_batch
-        self.max_observation_memory = max_observation_memory
-
-        # Create our optimizers
         self.actor_optimizer = torch.optim.Adam(
-            self.actor.parameters(), lr=self.learning_rate
+            self.actor.parameters(), lr=self.state.α
         )
         self.critic_optimizer = torch.optim.Adam(
-            self.critic.parameters(), lr=self.learning_rate
+            self.critic.parameters(), lr=self.state.α
         )
 
-    def should_reload(self) -> bool:
+        # Initialize some status tracking memory
+        self.previous_print_length: int = 0
+        self.current_action = "Initializing"
+
+    def print_status(self):
+        latest_reward = 0.0
+        average_reward = 0.0
+        avg_episode_length = 0.0
+
+        if len(self.state.rewards_all) > 0:
+            latest_reward = self.state.rewards_all[-1]
+            average_reward = np.mean(self.state.rewards_all[-100:])
+            avg_episode_length = np.mean(self.state.episode_lengths[-100:])
+
+        msg = (
+            f"Epoch {self.state.epochs_completed + 1} | {self.current_action} | "
+            + f"Latest Reward: {round(latest_reward)} | Latest Avg Rewards: {round(average_reward, 2)} | "
+            + f"Total Timesteps: {self.state.timesteps:,} | Avg Episode Length: {avg_episode_length}"
+        )
+
+        print(" " * self.previous_print_length, end="\r")
+        print(msg, end="\r")
+        self.previous_print_length = len(msg)
+
+    def save(self, directory: str):
         """
-        should_reload checks to see if there exists checkpoints to load from;
-        if so, it will return True
+        save will save the models, state, and any additional
+        data to the given directory
         """
-        return Path(self.save_folder).exists()
+        print(f"... Saving models and state to {directory} ...")
+        self.actor.save(f"{directory}/actor.pth")
+        self.critic.save(f"{directory}/critic.pth")
+        self.state.save(f"{directory}/state.data")
 
-    def load_trainer(self):
+    @staticmethod
+    def Load(directory: str) -> Trainer:
         """
-        load_trainer_state will reload all necessary checkpoints and memory training
-        from the last checkpoint possible. This is not just the model weights,
-        but also state memories and training loss progress, etc.
+        Load will load the models, state, and any additional
+        data from the given directory
         """
-        pass
+        print(f"... Loading models and state from {directory} ...")
+        actor = PPOPoseActor.Load(f"{directory}/actor.pth")
+        critic = PPOPoseCritic.Load(f"{directory}/critic.pth")
+        state = TrainingState.Load(f"{directory}/state.data")
 
-    def calculate_advantage(
-        self, rewards: List[int], qs: List[float], terminated: List[bool]
-    ) -> Tuple[List[float], List[float]]:
+        return Trainer(state.env, actor, critic, state)
+
+    def initial_rollout(self):
         """
-        calculate_advantage calculates the advantage for each timestep in the batch
+        initial_rollout will perform episode runs of the environment
+        until we have an initial minimum number of timesteps per
+        our training state requirements.
         """
-        returns: List[float] = []
-        gae: float = 0
+        while self.state.timesteps < self.state.timesteps_per_batch:
+            self.rollout()
 
-        # Calculate the advantage for each timestep
-        # Note that bool * int = 0 or int as bool is converted to 0 or 1
-        for index in reversed(range(len(rewards[0:-1]))):
-            delta = (
-                rewards[index] + self.λ * qs[index + 1] * terminated[index] - qs[index]
-            )
-            # γ is our smoothing factor, λ is our discount factor
-            gae = delta + self.γ * self.λ * terminated[index] * gae
-            # Append the advantage to the front of the list
-            returns.insert(0, gae + qs[index])
-
-        # Calculate the mean and standard deviation of the advantage
-        advantage = np.array(returns) - qs[:-1]
-        mean = np.mean(advantage)
-        std = np.std(advantage)
-
-        # The 1e-10 is to prevent division by zero
-        normalized_advantage = (advantage - mean) / (std + 1e-10)
-
-        return returns, normalized_advantage
-
-    def calculate_rewards_to_go(
-        self, rewards: List[int], episode_lengths: List[bool]
-    ) -> np.array:
+    def rollout(self) -> EpisodeMemory:
         """
-        calculate_rewards_to_go calculates the rewards to go for each timestep
-        in the batch
+        rollout will perform a rollout of the environment and
+        return the memory of the episode with the current
+        actor model
         """
-        rtgs: List[float] = []
-
-        for episode_length in reversed(episode_lengths):
-            # episode_length is the number of episodes we need to isolate
-            # from the end pf the rewards list
-            episode_rewards = rewards[-episode_length:]
-
-            # Now calculate rewards-to-go backwards from the terminal state
-            # to the original state
-            discounted_reward: float = 0
-            for reward in reversed(episode_rewards):
-                discounted_reward = reward + (self.λ * discounted_reward)
-                # We insert here to append to the front, since we're working
-                # backingwards on our episodes
-                rtgs.insert(0, discounted_reward)
-
-        return rtgs
-
-    def train(self):
         self.env.reset()
-        # observation = self.env.get_obs()
-        observations: List[np.array] = []
-        action_distributions: List[Normal] = []
-        actions: List[np.array] = []
-        episode_lengths: List[int] = []
-        rewards: List[int] = []
-        qs: List[float] = []
-        terminateds: List[bool] = []
-        # Batch data
-        # batch_obs = []             # batch observations
-        # batch_acts = []            # batch actions
-        # batch_log_probs = []       # log probs of each action
-        # batch_rews = []            # batch rewards
-        # batch_rtgs = []            # batch rewards-to-go
-        # batch_lens = []            # episodic lengths in batch
 
-        # Number of timesteps run so far this batch
-        # t = 0 while t < self.timesteps_per_batch:  # Rewards this episode
-        # ep_rews = []  obs = self.env.reset()
-        # done = False  for ep_t in range(self.max_timesteps_per_episode):
-        #     # Increment timesteps ran this batch so far
-        #     t += 1    # Collect observation
-        #     batch_obs.append(obs)    action, log_prob = self.get_action(obs)
-        #     obs, rew, done, _ = self.env.step(action)
+        timesteps = 0
+        observations: List[np.ndarray] = []
+        actions: List[np.ndarray] = []
+        log_probabilities: List[float] = []
+        rewards: List[float] = []
 
-        #     # Collect reward, action, and log prob
-        #     ep_rews.append(rew)
-        #     batch_acts.append(action)
-        #     batch_log_probs.append(log_prob)    if done:
-        #     break  # Collect episodic length and rewards
-        # batch_lens.append(ep_t + 1) # plus 1 because timestep starts at 0
-        # batch_rews.append(ep_rews)
-
-        tpb = 0  # timesteps per this batch
-        steps_per_episode = 0
         while True:
-            tpb += 1
-            steps_per_episode += 1
+            timesteps += 1
 
             observation = self.env.get_obs()
             action_distribution = self.actor(observation)
-            action = action_distribution.sample().numpy()
+            action = action_distribution.sample()
+            log_probability = action_distribution.log_prob(action).detach().numpy()
+            action = action.detach().numpy()
             observation, reward, terminated, _, _ = self.env.step(action)
             observation = observation["observation"]
 
             observations.append(observation)
-            action_distributions.append(action_distribution)
             actions.append(action)
+            log_probabilities.append(log_probability)
             rewards.append(reward)
-            q: Tensor = self.critic(observation)
-            qs.append(q.item())
 
-            # If the steps_per_episode is greater than the allowed
-            # self.max_steps_per_episode, we terminate the episode
-            # as a timeout
-            if steps_per_episode >= self.max_steps_per_episode:
+            if timesteps >= self.state.episode_timestep_max:
                 terminated = True
-            terminateds.append(terminated)
 
             if terminated:
-                print("terminated on", steps_per_episode, tpb)
-                # We penalize the reward returned on the final episode
-                # by the total steps for the episode
-                rewards[-1] -= steps_per_episode
-                print("rewards prior to cull", rewards)
+                break
 
-                # We track the length of the episode for calculating
-                # the discounted rewards later; it allows us to easily
-                # index and isolate each individual episode within the
-                # batch.
-                episode_lengths.append(steps_per_episode)
+        # Calculate the discounted rewards for this episode
+        discounted_rewards = self.calculate_discounted_rewards(rewards)
 
-                # Reset for the next episode
-                self.env.reset()
-                steps_per_episode = 0
-
-                # If we have finished the episode and have the number
-                # of timesteps we need for a batch, we stop our
-                # collection and move on to training
-                if tpb >= self.timesteps_per_batch:
-                    break
-
-        # Calculate our discounted rewards and advantage and normalized advantage
-        # discounted_rewards, normalized_advantage = self.calculate_advantage(
-        #     rewards, qs, terminateds
-        # )
-
-        # discounted_rewards = self.calculate_rewards_to_go(rewards, episode_lengths)
-        # advantage = self.critic_model(observations).detach()
-
-        test_returns, test_norm_adv = self.calculate_advantage(rewards, qs, terminateds)
-        print("test_returns", test_returns, len(test_returns))
-        print("test_norm_adv", test_norm_adv, test_norm_adv.shape)
-
-        discounted_rewards = self.calculate_rewards_to_go(rewards, episode_lengths)
-
-        # We only want timesteps_per_batch timesteps, but since we needed
-        # to wait until we had a terminated episode at the end, we likely
-        # overshot this. Drop the extra episodes from all recorded data
-        observations = observations[0 : self.timesteps_per_batch]
-        action_distributions = action_distributions[0 : self.timesteps_per_batch]
-        actions = actions[0 : self.timesteps_per_batch]
-        rewards = rewards[0 : self.timesteps_per_batch]
-        discounted_rewards = discounted_rewards[0 : self.timesteps_per_batch]
-        terminateds = terminateds[0 : self.timesteps_per_batch]
-
-        print("terminateds", terminateds)
-        print("observations size", len(observations), len(observations[0]))
-        print("rewards", rewards)
-
-        V = self.critic(observations).detach().squeeze()
-        print("V", V, V.shape)
-        # discounted_rewards = self.calculate_rewards_to_go(rewards, episode_lengths)
-        print("discounted rewards", discounted_rewards)
-        print(Tensor(discounted_rewards), Tensor(discounted_rewards).shape)
-        A_k = Tensor(discounted_rewards) - V.detach()
-        print("A_k", A_k, A_k.shape)
-        normalized_advantage = (A_k - A_k.mean()) / (A_k.std() + 1e-10)
-        print("normalized advantage", normalized_advantage, normalized_advantage.shape)
-        print("A_k.mean()", A_k.mean())
-        print("A_k.std()", A_k.std())
-        print("A_k - A_k.mean()", A_k - A_k.mean())
-        # raise "stopping"
-
-        # Calculate the advantage for these sessions
-        # returns, advantages = self.calculate_advantage(rewards, qs, terminated)
-
-        # Get the log probabilities of our action_distrbutions - the
-        # log probability is easier to work with mathematically for
-        # gradient descent and fixes some issues during training
-        print("here", len(action_distributions))
-        log_probs: List[Tensor] = []
-        # log_probs: Tensor = Tensor()
-        for index in range(len(action_distributions)):
-            distribution = action_distributions[index]
-            action = Tensor(actions[index])
-            log_probs.append(distribution.log_prob(action).detach().numpy())
-            # log_probs = torch.cat((log_probs, distribution.log_prob(action)), -1)
-        print(
-            "log probs prior to convert",
-            log_probs,
-            type(log_probs),
-            type(log_probs[0]),
+        self.state.remember(
+            observations, actions, log_probabilities, discounted_rewards
         )
-        log_probs = Tensor(log_probs)
-        print("first logprob", log_probs, log_probs.shape)
-        # log_probs: List[Tensor] = [
-        #     distribution.log_prob() for distribution in action_distributions
-        # ]
 
-        # We are now doing N epochs of training
-        N = 5  # TODO make this a hyper parameter
-        log_probs_old = log_probs
-        for _ in range(N):
-            # We need our log_probabilities for our current epoch and our current
-            # batch
-            # TODO - make this a hyperparameter
-            batch_size = 32
-            current_log_probs: Tensor = Tensor()
-            for batch in range(0, len(observations), batch_size):
-                distributions = self.actor(observations[batch : batch + batch_size])
-                print("ditributions", distributions)
-                actions = Tensor(actions[batch : batch + batch_size])
-                print("actions", actions, actions.shape)
-                log_probs2 = distributions.log_prob(actions)
-                print("log_probs2", log_probs2, log_probs2.shape)
-                current_log_probs = torch.cat((current_log_probs, log_probs2), dim=0)
+        return observations, actions, log_probabilities, discounted_rewards
 
-            # We are calculating the ratio as defined by:
-            #
-            #   π_θ(a_t | s_t)
-            #   --------------
-            #   π_θ_k(a_t | s_t)
-            # Where our originaly utilized log probabilities are
-            # π_θ_k and our current model is creating π_θ. We
-            # use the log probabilities and subtract, then raise
-            # e to the power of the results to simplify the math
-            # for back propagation/gradient descent.
-            print("current_log_probs", current_log_probs, current_log_probs.shape)
-            print("log_probs", log_probs, log_probs.shape)
-            # summed = torch.sum(log_probs, dim=-1)
-            # mean = torch.mean(log_probs, dim=-1)
-            # print("summed", summed, summed.shape)
-            # print("mean", mean, mean.shape)
-            # raise "hit"
-            current_summed = torch.sum(current_log_probs, dim=-1)
-            logs_summed = torch.sum(log_probs, dim=-1)
-            # ratios = torch.exp(current_log_probs - log_probs)
-            ratios = torch.exp(current_summed - logs_summed)
+    def calculate_discounted_rewards(self, rewards: List[float]) -> List[float]:
+        """
+        calculated_discounted_rewards will calculate the discounted rewards
+        of each timestep of an episode given its initial rewards and episode
+        length
+        """
+        discounted_rewards: List[float] = []
+        discounted_reward: float = 0
+        for reward in reversed(rewards):
+            discounted_reward = reward + (self.state.γ * discounted_reward)
+            # We insert here to append to the front as we're calculating
+            # backwards from the end of our episodes
+            discounted_rewards.insert(0, discounted_reward)
 
-            # Now we need to calculate the actor's loss.
-            # The losses  are either a clipped value or the ratio
-            # of our advantage, whichever is smaller. This result
-            # is clipped to prevent the loss from causing significant
-            # swings in behaviour in the model resulting in a high
-            # degree of instability. Finally, since it's a loss,
-            # we take the negative of this value since we're trying
-            # to minimize the loss with SGD while maximizing our
-            # rewards. We the ntake the mean of this value to find
-            # the loss of this entire batch.
-            print("ratio", ratios, ratios.shape)
-            print(
-                "normalized_advantage", normalized_advantage, normalized_advantage.shape
-            )
-            # print("normalized_advantage * ratios", normalized_advantage * ratios)
-            print("ratios * normalized_advantage", ratios * normalized_advantage)
-            print(
-                "torch.clamp(ratios, 1 - self.ε, 1 + self.ε) * normalized_advantage",
-                torch.clamp(ratios, 1 - self.ε, 1 + self.ε) * normalized_advantage,
-            )
-            actor_loss = -torch.min(
-                ratios * normalized_advantage,
-                torch.clamp(ratios, 1 - self.ε, 1 + self.ε) * normalized_advantage,
-            ).mean()
+        return discounted_rewards
 
-            self.actor_optimizer.zero_grad()
-            actor_loss.backward()
-            self.actor_optimizer.step()
+    def training_step(self) -> Tuple[float, float]:
+        """
+        training_step will perform a single epoch of training for the
+        actor and critic model
 
-            print("holy shit we made it this far")
-            print(actor_loss)
-            raise "holy hell"
+        Returns the loss for each model at the end of the step
+        """
+        # Pull a batch of data from our memory
+        observations, _, log_probabilities, rewards = self.state.get_batch()
+
+        # For our given batch we need to get the current estimated
+        # value of our given states for our critic, V
+        V = self.critic(observations).detach().squeeze()
+
+        # Now we need to calculate our advantage and normalize it
+        advantage = Tensor(rewards) - V
+        normalized_advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
+
+        # Get our output for the current actor given our log
+        # probabilities
+        current_action_distributions = self.actor(observations)
+        current_actions = current_action_distributions.sample()
+        current_log_probabilities = current_action_distributions.log_prob(
+            current_actions
+        )
+
+        # We are calculating the ratio as defined by:
+        #
+        #   π_θ(a_t | s_t)
+        #   --------------
+        #   π_θ_k(a_t | s_t)
+        # Where our originaly utilized log probabilities are
+        # π_θ_k and our current model is creating π_θ. We
+        # use the log probabilities and subtract, then raise
+        # e to the power of the results to simplify the math
+        # for back propagation/gradient descent.
+        # Note that we have a log probability matrix of shape
+        # (batch size, number of actions), where we're expecting
+        # (batch size, 1). We sum our logs as the log(A + B) =
+        # log(A) + log(B).
+        log_probabilities = Tensor(log_probabilities)
+        log_probabilities = torch.sum(log_probabilities, dim=-1)
+        current_log_probabilities = torch.sum(current_log_probabilities, dim=-1)
+        ratio = torch.exp(current_log_probabilities - log_probabilities)
+
+        # Now we calculate the actor loss for this step
+        actor_loss = -torch.min(
+            ratio * normalized_advantage,
+            torch.clamp(ratio, 1 - self.state.ε, 1 + self.state.ε)
+            * normalized_advantage,
+        ).mean()
+
+        print("I made it this far I guess", actor_loss)
+
+        self.actor_optimizer.zero_grad()
+        actor_loss.backward()
+        self.actor_optimizer.step()
+
+        raise "we did it?"
+
+        return actor_loss.item(), critic_loss.item()
+
+    def train(self):
+        """
+        train will train the actor and critic models with the
+        given training state
+        """
+        # If our training is starting and we don't have enough
+        # episodes for our batch, initialize by performing
+        # multiple epsiodes
+        if self.state.timesteps < self.state.timesteps_per_batch:
+            self.current_action = "Initial Rollout"
+            self.print_status()
+            self.initial_rollout()
+
+        while self.state.epochs_completed <= self.state.epochs:
+            # Perform enough rollouts to fill a new batch prior
+            # to requesting a new one
+            self.print_status()
+            new_timesteps = 0
+            while new_timesteps < self.state.timesteps_per_batch:
+                self.current_action = "Rollout"
+                states, _, _, _ = self.rollout()
+                self.print_status()
+                new_timesteps += len(states)
+
+            # Now that we've performed sufficient exploration, run
+            # a certain amount of taining steps
+            n = 1
+            for i in range(1):  # todo make singular parameter
+                self.current_action = f"Training Step {i+1} of {n}"
+                actor_loss, critic_loss = self.training_step()
+                self.print_status()
+
+            # TODO - save regularly
