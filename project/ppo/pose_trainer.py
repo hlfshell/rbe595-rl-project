@@ -98,7 +98,7 @@ class PPOPoseTrainer:
 
         # Calculate the advantage for each timestep
         # Note that bool * int = 0 or int as bool is converted to 0 or 1
-        for index in reversed(range(len(rewards))):
+        for index in reversed(range(len(rewards[0:-1]))):
             delta = (
                 rewards[index] + self.λ * qs[index + 1] * terminated[index] - qs[index]
             )
@@ -234,6 +234,10 @@ class PPOPoseTrainer:
         # discounted_rewards = self.calculate_rewards_to_go(rewards, episode_lengths)
         # advantage = self.critic_model(observations).detach()
 
+        test_returns, test_norm_adv = self.calculate_advantage(rewards, qs, terminateds)
+        print("test_returns", test_returns, len(test_returns))
+        print("test_norm_adv", test_norm_adv, test_norm_adv.shape)
+
         discounted_rewards = self.calculate_rewards_to_go(rewards, episode_lengths)
 
         # We only want timesteps_per_batch timesteps, but since we needed
@@ -301,11 +305,12 @@ class PPOPoseTrainer:
             current_log_probs: Tensor = Tensor()
             for batch in range(0, len(observations), batch_size):
                 distributions = self.actor(observations[batch : batch + batch_size])
+                print("ditributions", distributions)
                 actions = Tensor(actions[batch : batch + batch_size])
+                print("actions", actions, actions.shape)
                 log_probs2 = distributions.log_prob(actions)
+                print("log_probs2", log_probs2, log_probs2.shape)
                 current_log_probs = torch.cat((current_log_probs, log_probs2), dim=0)
-
-            print("we still equal?", log_probs_old == log_probs)
 
             # We are calculating the ratio as defined by:
             #
@@ -319,7 +324,15 @@ class PPOPoseTrainer:
             # for back propagation/gradient descent.
             print("current_log_probs", current_log_probs, current_log_probs.shape)
             print("log_probs", log_probs, log_probs.shape)
-            ratios = torch.exp(current_log_probs - log_probs)
+            # summed = torch.sum(log_probs, dim=-1)
+            # mean = torch.mean(log_probs, dim=-1)
+            # print("summed", summed, summed.shape)
+            # print("mean", mean, mean.shape)
+            # raise "hit"
+            current_summed = torch.sum(current_log_probs, dim=-1)
+            logs_summed = torch.sum(log_probs, dim=-1)
+            # ratios = torch.exp(current_log_probs - log_probs)
+            ratios = torch.exp(current_summed - logs_summed)
 
             # Now we need to calculate the actor's loss.
             # The losses  are either a clipped value or the ratio
@@ -335,7 +348,7 @@ class PPOPoseTrainer:
             print(
                 "normalized_advantage", normalized_advantage, normalized_advantage.shape
             )
-            print("normalized_advantage * ratios", normalized_advantage * ratios)
+            # print("normalized_advantage * ratios", normalized_advantage * ratios)
             print("ratios * normalized_advantage", ratios * normalized_advantage)
             print(
                 "torch.clamp(ratios, 1 - self.ε, 1 + self.ε) * normalized_advantage",
