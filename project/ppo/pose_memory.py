@@ -30,9 +30,9 @@ class TrainingState:
         ε: float = 0.2,
         α: float = 0.005,
         epochs: int = 10_000,
-        max_observation_memory: int = 100_000,
-        episode_timestep_max: int = 10,
-        timesteps_per_batch: int = 100,
+        max_observation_memory: int = 250_000,
+        episode_timestep_max: int = 200,
+        timesteps_per_batch: int = 5_000,
         save_every_epochs: int = 5,
     ):
         # ================
@@ -241,11 +241,18 @@ class TrainingState:
         memory_to_tensor converts a given episode memory to a set of
         tensors
         """
+        # For a speed optimization, ensure that we convert the data
+        # to a numpy array prior to converting to tensor.
+        observations_array = np.array(memory[0], dtype=np.float32)
+        actions_array = np.array(memory[1], dtype=np.float32)
+        log_probabilities_array = np.array(memory[2], dtype=np.float32)
+        rewards_array = np.array(memory[3], dtype=np.float32)
+
         # Convert the episode memory to a tensor
-        observations = Tensor(memory[0], dtype=torch.float32)
-        actions = Tensor(memory[1], dtype=torch.float32)
-        log_probabilities = Tensor.tensor(memory[2], dtype=torch.float32)
-        rewards = Tensor(memory[3], dtype=torch.float32)
+        observations = Tensor(observations_array, dtype=torch.float32)
+        actions = Tensor(actions_array, dtype=torch.float32)
+        log_probabilities = Tensor.tensor(log_probabilities_array, dtype=torch.float32)
+        rewards = Tensor(rewards_array, dtype=torch.float32)
 
         return observations, actions, log_probabilities, rewards
 
@@ -279,7 +286,7 @@ class TrainingState:
             "rewards_all": self.rewards_all,
             "timesteps": self.timesteps,
             "max_memory": self.max_memory,
-            "save_every_epochs": self.save_every,
+            "save_every_epochs": self.save_every_epochs,
             "episode_timestep_max": self.episode_timestep_max,
             "timesteps_per_batch": self.timesteps_per_batch,
             "epochs": self.epochs,

@@ -64,7 +64,6 @@ class Trainer:
         save will save the models, state, and any additional
         data to the given directory
         """
-        print(f"... Saving models and state to {directory} ...")
         self.actor.save(f"{directory}/actor.pth")
         self.critic.save(f"{directory}/critic.pth")
         self.state.save(f"{directory}/state.data")
@@ -170,10 +169,8 @@ class Trainer:
             )
 
             # Increment our episodes offset by the number of episodes we've
-            # pulled. We do -1 to reuse the last episode since we've likely
-            # trimmed it and would otherwise not allow the model to learn
-            # from its later episodes.
-            episodes_offset += len(observations) - 1
+            # pulled
+            episodes_offset += len(observations)
 
             # If our observations is empty, then we have trained on all
             # available data and can return
@@ -185,7 +182,7 @@ class Trainer:
             V = self.critic(observations).detach().squeeze()
 
             # Now we need to calculate our advantage and normalize it
-            advantage = Tensor(rewards) - V
+            advantage = Tensor(np.array(rewards, dtype="float32")) - V
             normalized_advantage = (advantage - advantage.mean()) / (
                 advantage.std() + 1e-8
             )
@@ -212,7 +209,7 @@ class Trainer:
             # (batch size, number of actions), where we're expecting
             # (batch size, 1). We sum our logs as the log(A + B) =
             # log(A) + log(B).
-            log_probabilities = Tensor(log_probabilities)
+            log_probabilities = Tensor(np.array(log_probabilities, dtype=np.float32))
             log_probabilities = torch.sum(log_probabilities, dim=-1)
             current_log_probabilities = torch.sum(current_log_probabilities, dim=-1)
             ratio = torch.exp(current_log_probabilities - log_probabilities)
@@ -241,6 +238,7 @@ class Trainer:
             self.critic_optimizer.zero_grad()
             critic_loss.backward()
             self.critic_optimizer.step()
+        return
 
     def train(self):
         """
@@ -272,10 +270,10 @@ class Trainer:
             self.print_status()
             self.training_step()
 
-            if self.state.completed_epochs + 1 % self.state.save_every_epochs:
+            if self.state.epochs_completed + 1 % self.state.save_every_epochs:
                 self.current_action = "Saving"
                 self.print_status()
-                self.save()
+                self.save("training")
 
         print("")
         print("Training complete!")

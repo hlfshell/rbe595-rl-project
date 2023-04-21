@@ -90,6 +90,11 @@ class PPOPoseActor(Module):
         sigma_tensor: Tensor = self.sigma_model(model_head)
 
         # Create our normal distribution and sample for our output
+        if mu_tensor.isnan().any():
+            print("mu is nan", mu_tensor)
+        if sigma_tensor.isnan().any():
+            print("sigma is nan", sigma_tensor)
+
         distribution: Normal = Normal(mu_tensor, sigma_tensor)
 
         return distribution
