@@ -11,6 +11,7 @@ import torch
 from pathlib import Path
 from typing import Tuple, List
 from collections import deque
+import sys
 
 EpisodeMemory: Tuple[List[np.array], List[np.array], List[np.array], List[float]]
 
@@ -21,33 +22,66 @@ class Trainer:
         env: RobotTaskEnv,
         actor: PPOPoseActor,
         critic: PPOPoseCritic,
-        state: TrainingState,
+        timesteps: int,
+        timesteps_per_batch: int,
+        max_timesteps_per_episode: int,
+        γ: float = 0.99,
+        ε: float = 0.2,
+        α: float = 0.005,
+        training_cycles_per_batch: int = 5,
+        save_every_x_timesteps: int = 50_000,
     ):
         self.env = env
         self.actor = actor
         self.critic = critic
-        self.state = state
+
+        self.timesteps = timesteps
+        self.current_timestep = 0
+        self.max_timesteps_per_episode = max_timesteps_per_episode
+        self.timesteps_per_batch = timesteps_per_batch
+        self.save_every_x_timesteps = save_every_x_timesteps
+        
+        # Hyperparameters
+        self.γ = γ
+        self.ε = ε
+        self.α = α
+        self.training_cycles_per_batch = training_cycles_per_batch
+
+        # Memory
+        self.terminal_rewards: List[float] = []
+        self.terminal_timesteps: List[int] = []
+        self.actor_losses: List[float] = []
+        self.critic_losses: List[float] = []
 
         self.actor_optimizer = torch.optim.Adam(
-            self.actor.parameters(), lr=self.state.α
+            self.actor.parameters(), lr=self.α
         )
         self.critic_optimizer = torch.optim.Adam(
-            self.critic.parameters(), lr=self.state.α
+            self.critic.parameters(), lr=self.α
         )
 
         # Initialize some status tracking memory
         self.previous_print_length: int = 0
         self.current_action = "Initializing"
+        self.last_save: int = 0
 
     def print_status(self):
         latest_reward = 0.0
         average_reward = 0.0
-        avg_episode_length = 0.0
+        latest_actor_loss = 0.0
+        avg_actor_loss = 0.0
+        latest_critic_loss = 0.0
+        avg_critic_loss = 0.0
 
-        if len(self.state.rewards_all) > 0:
-            latest_reward = self.state.rewards_all[-1]
-            average_reward = np.mean(self.state.rewards_all[-100:])
-            avg_episode_length = np.mean(self.state.episode_lengths[-100:])
+        if len(self.terminal_rewards) > 0:
+            latest_reward = self.terminal_rewards[-1]
+            average_reward = np.mean(self.terminal_rewards[-100:])
+        
+        if len(self.actor_losses) > 0:
+            latest_actor_loss = self.actor_losses[-1]
+            avg_actor_loss = np.mean(self.actor_losses[-100:])
+            latest_critic_loss = self.critic_losses[-1]
+            avg_critic_loss = np.mean(self.critic_losses[-100:])
 
         # msg = (
         #     f"Epoch {self.state.epochs_completed + 1} | {self.current_action} | "
@@ -55,20 +89,23 @@ class Trainer:
         #     + f"Total Timesteps: {self.state.timesteps:,} | Avg Episode Length: {avg_episode_length}"
         # )
 
-        # print(" " * self.previous_print_length, end="\r")
+        # print(" " * self.previous_print_length, file=sys.stderr, end="\r")
         # print(msg, end="\r")
         msg = f'''
             =========================================
-            Epoch {self.state.epochs_completed + 1}
-            {self.current_action}
+            Timesteps: {self.current_timestep:,} / {self.timesteps:,} ({round(self.current_timestep/self.timesteps, 4)*100}%)
+            Episodes: {len(self.terminal_rewards)}
+            Currently: {self.current_action}
             Latest Reward: {round(latest_reward)}
-            Latest Avg Rewards: {round(average_reward, 2)}
-            Total Timesteps: {self.state.timesteps:,}
-            Avg Episode Length: {avg_episode_length}
+            Latest Avg Rewards: {round(average_reward)}
+            Latest Actor Loss: {round(latest_actor_loss, 4)}
+            Avg Actor Loss: {round(avg_actor_loss, 4)}
+            Latest Critic Loss: {round(latest_critic_loss, 4)}
+            Avg Critic Loss: {round(avg_critic_loss, 4)}
             =========================================
         '''
 
-        print(msg)
+        print(msg, file=sys.stderr)
         # self.previous_print_length = len(msg)
 
     def save(self, directory: str):
@@ -78,7 +115,7 @@ class Trainer:
         """
         self.actor.save(f"{directory}/actor.pth")
         self.critic.save(f"{directory}/critic.pth")
-        self.state.save(f"{directory}/state.data")
+        # TODO - save state/progress
 
     @staticmethod
     def Load(directory: str) -> Trainer:
@@ -89,18 +126,9 @@ class Trainer:
         print(f"... Loading models and state from {directory} ...")
         actor = PPOPoseActor.Load(f"{directory}/actor.pth")
         critic = PPOPoseCritic.Load(f"{directory}/critic.pth")
-        state = TrainingState.Load(f"{directory}/state.data")
+        # TODO - load state/progress
 
-        return Trainer(state.env, actor, critic, state)
-
-    def initial_rollout(self):
-        """
-        initial_rollout will perform episode runs of the environment
-        until we have an initial minimum number of timesteps per
-        our training state requirements.
-        """
-        while self.state.timesteps < self.state.timesteps_per_batch:
-            self.rollout()
+        # return Trainer(state.env, actor, critic, state)
 
     def rollout(self) -> EpisodeMemory:
         """
@@ -132,7 +160,7 @@ class Trainer:
             log_probabilities.append(log_probability)
             rewards.append(reward)
 
-            if timesteps >= self.state.episode_timestep_max:
+            if timesteps >= self.max_timesteps_per_episode:
                 terminated = True
 
             if terminated:
@@ -143,9 +171,8 @@ class Trainer:
         # Calculate the discounted rewards for this episode
         discounted_rewards = self.calculate_discounted_rewards(rewards)
 
-        self.state.remember(
-            observations, actions, log_probabilities, discounted_rewards
-        )
+        # Get the terminal reward and record it for status tracking
+        self.terminal_rewards.append(discounted_rewards[-1])
 
         return observations, actions, log_probabilities, discounted_rewards
 
@@ -158,144 +185,141 @@ class Trainer:
         discounted_rewards: List[float] = []
         discounted_reward: float = 0
         for reward in reversed(rewards):
-            discounted_reward = reward + (self.state.γ * discounted_reward)
+            discounted_reward = reward + (self.γ * discounted_reward)
             # We insert here to append to the front as we're calculating
             # backwards from the end of our episodes
             discounted_rewards.insert(0, discounted_reward)
 
         return discounted_rewards
 
-    def training_step(self) -> Tuple[float, float]:
+    def training_step(
+        self,
+        observations: Tensor,
+        log_probabilities: Tensor,
+        rewards: Tensor,
+    ) -> Tuple[float, float]:
         """
         training_step will perform a single epoch of training for the
         actor and critic model
 
         Returns the loss for each model at the end of the step
         """
-        # This will track which episodes we've trained on; we will
-        # train on our entire memory for each epoch
-        episodes_offset = 0
+        # For our given batch we need to get the current estimated
+        # value of our given states for our critic, V
+        V = self.critic(observations).detach().squeeze()
 
-        training_cycles = 0
+        # Now we need to calculate our advantage and normalize it
+        advantage = Tensor(np.array(rewards, dtype="float32")) - V
+        normalized_advantage = (advantage - advantage.mean()) / (
+            advantage.std() + 1e-8
+        )
 
-        while True:
-            # Pull a batch of data from our memory
-            observations, _, log_probabilities, rewards = self.state.get_batch(
-                episodes_offset
-            )
+        # Get our output for the current actor given our log
+        # probabilities
+        current_action_distributions = self.actor(observations)
+        current_actions = current_action_distributions.sample()
+        current_log_probabilities = current_action_distributions.log_prob(
+            current_actions
+        )
 
-            # Increment our episodes offset by the number of episodes we've
-            # pulled
-            episodes_offset += len(observations)
+        # We are calculating the ratio as defined by:
+        #
+        #   π_θ(a_t | s_t)
+        #   --------------
+        #   π_θ_k(a_t | s_t)
+        # Where our originaly utilized log probabilities are
+        # π_θ_k and our current model is creating π_θ. We
+        # use the log probabilities and subtract, then raise
+        # e to the power of the results to simplify the math
+        # for back propagation/gradient descent.
+        # Note that we have a log probability matrix of shape
+        # (batch size, number of actions), where we're expecting
+        # (batch size, 1). We sum our logs as the log(A + B) =
+        # log(A) + log(B).
+        log_probabilities = Tensor(np.array(log_probabilities, dtype=np.float32))
+        # log_probabilities = torch.sum(log_probabilities, dim=-1)
+        # current_log_probabilities = torch.sum(current_log_probabilities, dim=-1)
+        ratio = torch.exp(current_log_probabilities - log_probabilities)
 
-            # If our observations is empty, then we have trained on all
-            # available data and can return
-            if len(observations) == 0:
-                training_cycles += 1
-                if training_cycles >= self.state.training_cycles_per_batch:
-                    break
-                else:
-                    continue
+        # Now we calculate the actor loss for this step
+        actor_loss = -torch.min(
+            ratio * normalized_advantage,
+            torch.clamp(ratio, 1 - self.ε, 1 + self.ε)
+            * normalized_advantage,
+        ).mean()
 
-            # For our given batch we need to get the current estimated
-            # value of our given states for our critic, V
-            V = self.critic(observations).detach().squeeze()
+        self.actor_optimizer.zero_grad()
+        actor_loss.backward()
+        self.actor_optimizer.step()
 
-            # Now we need to calculate our advantage and normalize it
-            advantage = Tensor(np.array(rewards, dtype="float32")) - V
-            normalized_advantage = (advantage - advantage.mean()) / (
-                advantage.std() + 1e-8
-            )
+        # Now we do a training step for the critic
 
-            # Get our output for the current actor given our log
-            # probabilities
-            current_action_distributions = self.actor(observations)
-            current_actions = current_action_distributions.sample()
-            current_log_probabilities = current_action_distributions.log_prob(
-                current_actions
-            )
+        # Calculate what the critic current evaluates our states as.
+        # First we have the critic evaluate all observation states,
+        # then compare it ot the collected rewards over that time.
+        # We will convert our rewards into a known tensor
+        V = self.critic(observations)
+        reward_tensor = Tensor(rewards).unsqueeze(-1)
+        critic_loss = MSELoss()(V, reward_tensor)
 
-            # We are calculating the ratio as defined by:
-            #
-            #   π_θ(a_t | s_t)
-            #   --------------
-            #   π_θ_k(a_t | s_t)
-            # Where our originaly utilized log probabilities are
-            # π_θ_k and our current model is creating π_θ. We
-            # use the log probabilities and subtract, then raise
-            # e to the power of the results to simplify the math
-            # for back propagation/gradient descent.
-            # Note that we have a log probability matrix of shape
-            # (batch size, number of actions), where we're expecting
-            # (batch size, 1). We sum our logs as the log(A + B) =
-            # log(A) + log(B).
-            log_probabilities = Tensor(np.array(log_probabilities, dtype=np.float32))
-            log_probabilities = torch.sum(log_probabilities, dim=-1)
-            current_log_probabilities = torch.sum(current_log_probabilities, dim=-1)
-            ratio = torch.exp(current_log_probabilities - log_probabilities)
+        self.critic_optimizer.zero_grad()
+        critic_loss.backward()
+        self.critic_optimizer.step()
 
-            # Now we calculate the actor loss for this step
-            actor_loss = -torch.min(
-                ratio * normalized_advantage,
-                torch.clamp(ratio, 1 - self.state.ε, 1 + self.state.ε)
-                * normalized_advantage,
-            ).mean()
-
-            self.actor_optimizer.zero_grad()
-            actor_loss.backward()
-            self.actor_optimizer.step()
-
-            # Now we do a training step for the critic
-
-            # Calculate what the critic current evaluates our states as.
-            # First we have the critic evaluate all observation states,
-            # then compare it ot the collected rewards over that time.
-            # We will convert our rewards into a known tensor
-            V = self.critic(observations)
-            reward_tensor = Tensor(rewards).unsqueeze(-1)
-            critic_loss = MSELoss()(V, reward_tensor)
-
-            self.critic_optimizer.zero_grad()
-            critic_loss.backward()
-            self.critic_optimizer.step()
-        return
+        return actor_loss.item(), critic_loss.item()
 
     def train(self):
         """
         train will train the actor and critic models with the
         given training state
         """
-        # If our training is starting and we don't have enough
-        # episodes for our batch, initialize by performing
-        # multiple epsiodes
-        if self.state.timesteps < self.state.timesteps_per_batch:
-            self.current_action = "Initial Rollout"
+        while self.current_timestep <= self.timesteps:
+            # Perform a rollout to get our next training
+            # batch
             self.print_status()
-            self.initial_rollout()
+            observations: List[np.ndarray] = []
+            log_probabilities: List[float] = []
+            rewards: List[float] = []
 
-        while self.state.epochs_completed <= self.state.epochs:
-            # Perform enough rollouts to fill a new batch prior
-            # to requesting a new one
-            self.print_status()
-            new_timesteps = 0
-            while new_timesteps < self.state.timesteps_per_batch:
+            while len(observations) < self.timesteps_per_batch:
                 self.current_action = "Rollout"
-                states, _, _, _ = self.rollout()
+                obs, _, log_probs, rwds = self.rollout()
+                # Combine these arrays into our overall batch
+                observations += obs
+                log_probabilities += log_probs
+                rewards += rwds
+                
+                # Increment our count of timesteps
+                self.current_timestep += len(obs)
+
+                self.print_status()            
+
+            # We need to trim the batch memory to the batch size
+            observations = observations[: self.timesteps_per_batch]
+            log_probabilities = log_probabilities[: self.timesteps_per_batch]
+            rewards = rewards[: self.timesteps_per_batch]
+
+            # Finally, convert these to numpy arrays and then to tensors
+            observations = Tensor(np.array(observations, dtype=np.float32))
+            log_probabilities = Tensor(np.array(log_probabilities, dtype=np.float32))
+            rewards = Tensor(np.array(rewards, dtype=np.float32))
+
+            # Perform our training steps
+            for c in range(self.training_cycles_per_batch):
+                self.current_action = f"Training Cycle {c+1}/{self.training_cycles_per_batch}"
                 self.print_status()
-                new_timesteps += len(states)
+                actor_loss, critic_loss = self.training_step(observations, log_probabilities, rewards)
+                self.actor_losses.append(actor_loss)
+                self.critic_losses.append(critic_loss)
 
-            # Now that we've performed sufficient exploration, run
-            # a certain amount of taining steps
-            self.current_action = "Training"
-            self.print_status()
-            self.training_step()
-
-            if self.state.epochs_completed + 1 % self.state.save_every_epochs:
+            # Every X timesteps, save our current status
+            if self.current_timestep - self.save_every_x_timesteps >= self.save_every_x_timesteps:
                 self.current_action = "Saving"
                 self.print_status()
                 self.save("training")
 
-            self.state.epochs_completed += 1
-
         print("")
         print("Training complete!")
+
+        # Save our results
+        self.save("training")
