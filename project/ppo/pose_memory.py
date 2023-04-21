@@ -34,6 +34,7 @@ class TrainingState:
         episode_timestep_max: int = 200,
         timesteps_per_batch: int = 5_000,
         save_every_epochs: int = 5,
+        training_cycles_per_batch: int = 1,
     ):
         # ================
         # State management parameters
@@ -44,6 +45,10 @@ class TrainingState:
         # Once this is exceeded additional cleanup
         # functionality will be handled
         self.max_memory = max_observation_memory
+
+        # training_cycles_per_batch is the number of
+        # training cycles we'll perform per batch
+        self.training_cycles_per_batch = training_cycles_per_batch
 
         # ================
         # Trainer state
@@ -289,6 +294,7 @@ class TrainingState:
             "save_every_epochs": self.save_every_epochs,
             "episode_timestep_max": self.episode_timestep_max,
             "timesteps_per_batch": self.timesteps_per_batch,
+            "training_cycles_per_batch": self.training_cycles_per_batch,
             "epochs": self.epochs,
             "epochs_completed": self.epochs_completed,
             "γ": self.γ,
@@ -323,6 +329,7 @@ class TrainingState:
             data["episode_timestep_max"],
             data["timesteps_per_batch"],
             data["save_every_epochs"],
+            data["training_cycles_per_batch"],
         )
 
         # Load the data from the file

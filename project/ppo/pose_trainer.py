@@ -49,15 +49,27 @@ class Trainer:
             average_reward = np.mean(self.state.rewards_all[-100:])
             avg_episode_length = np.mean(self.state.episode_lengths[-100:])
 
-        msg = (
-            f"Epoch {self.state.epochs_completed + 1} | {self.current_action} | "
-            + f"Latest Reward: {round(latest_reward)} | Latest Avg Rewards: {round(average_reward, 2)} | "
-            + f"Total Timesteps: {self.state.timesteps:,} | Avg Episode Length: {avg_episode_length}"
-        )
+        # msg = (
+        #     f"Epoch {self.state.epochs_completed + 1} | {self.current_action} | "
+        #     + f"Latest Reward: {round(latest_reward)} | Latest Avg Rewards: {round(average_reward, 2)} | "
+        #     + f"Total Timesteps: {self.state.timesteps:,} | Avg Episode Length: {avg_episode_length}"
+        # )
 
-        print(" " * self.previous_print_length, end="\r")
-        print(msg, end="\r")
-        self.previous_print_length = len(msg)
+        # print(" " * self.previous_print_length, end="\r")
+        # print(msg, end="\r")
+        msg = f'''
+            =========================================
+            Epoch {self.state.epochs_completed + 1}
+            {self.current_action}
+            Latest Reward: {round(latest_reward)}
+            Latest Avg Rewards: {round(average_reward, 2)}
+            Total Timesteps: {self.state.timesteps:,}
+            Avg Episode Length: {avg_episode_length}
+            =========================================
+        '''
+
+        print(msg)
+        # self.previous_print_length = len(msg)
 
     def save(self, directory: str):
         """
@@ -124,6 +136,8 @@ class Trainer:
                 terminated = True
 
             if terminated:
+                # Penalize for each timestep
+                rewards[-1] -= timesteps
                 break
 
         # Calculate the discounted rewards for this episode
@@ -162,6 +176,8 @@ class Trainer:
         # train on our entire memory for each epoch
         episodes_offset = 0
 
+        training_cycles = 0
+
         while True:
             # Pull a batch of data from our memory
             observations, _, log_probabilities, rewards = self.state.get_batch(
@@ -175,7 +191,11 @@ class Trainer:
             # If our observations is empty, then we have trained on all
             # available data and can return
             if len(observations) == 0:
-                break
+                training_cycles += 1
+                if training_cycles >= self.state.training_cycles_per_batch:
+                    break
+                else:
+                    continue
 
             # For our given batch we need to get the current estimated
             # value of our given states for our critic, V
@@ -274,6 +294,8 @@ class Trainer:
                 self.current_action = "Saving"
                 self.print_status()
                 self.save("training")
+
+            self.state.epochs_completed += 1
 
         print("")
         print("Training complete!")
