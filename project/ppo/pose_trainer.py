@@ -159,70 +159,88 @@ class Trainer:
 
         Returns the loss for each model at the end of the step
         """
-        # Pull a batch of data from our memory
-        observations, _, log_probabilities, rewards = self.state.get_batch()
+        # This will track which episodes we've trained on; we will
+        # train on our entire memory for each epoch
+        episodes_offset = 0
 
-        # For our given batch we need to get the current estimated
-        # value of our given states for our critic, V
-        V = self.critic(observations).detach().squeeze()
+        while True:
+            # Pull a batch of data from our memory
+            observations, _, log_probabilities, rewards = self.state.get_batch(
+                episodes_offset
+            )
 
-        # Now we need to calculate our advantage and normalize it
-        advantage = Tensor(rewards) - V
-        normalized_advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
+            # Increment our episodes offset by the number of episodes we've
+            # pulled. We do -1 to reuse the last episode since we've likely
+            # trimmed it and would otherwise not allow the model to learn
+            # from its later episodes.
+            episodes_offset += len(observations) - 1
 
-        # Get our output for the current actor given our log
-        # probabilities
-        current_action_distributions = self.actor(observations)
-        current_actions = current_action_distributions.sample()
-        current_log_probabilities = current_action_distributions.log_prob(
-            current_actions
-        )
+            # If our observations is empty, then we have trained on all
+            # available data and can return
+            if len(observations) == 0:
+                break
 
-        # We are calculating the ratio as defined by:
-        #
-        #   π_θ(a_t | s_t)
-        #   --------------
-        #   π_θ_k(a_t | s_t)
-        # Where our originaly utilized log probabilities are
-        # π_θ_k and our current model is creating π_θ. We
-        # use the log probabilities and subtract, then raise
-        # e to the power of the results to simplify the math
-        # for back propagation/gradient descent.
-        # Note that we have a log probability matrix of shape
-        # (batch size, number of actions), where we're expecting
-        # (batch size, 1). We sum our logs as the log(A + B) =
-        # log(A) + log(B).
-        log_probabilities = Tensor(log_probabilities)
-        log_probabilities = torch.sum(log_probabilities, dim=-1)
-        current_log_probabilities = torch.sum(current_log_probabilities, dim=-1)
-        ratio = torch.exp(current_log_probabilities - log_probabilities)
+            # For our given batch we need to get the current estimated
+            # value of our given states for our critic, V
+            V = self.critic(observations).detach().squeeze()
 
-        # Now we calculate the actor loss for this step
-        actor_loss = -torch.min(
-            ratio * normalized_advantage,
-            torch.clamp(ratio, 1 - self.state.ε, 1 + self.state.ε)
-            * normalized_advantage,
-        ).mean()
+            # Now we need to calculate our advantage and normalize it
+            advantage = Tensor(rewards) - V
+            normalized_advantage = (advantage - advantage.mean()) / (
+                advantage.std() + 1e-8
+            )
 
-        self.actor_optimizer.zero_grad()
-        actor_loss.backward()
-        self.actor_optimizer.step()
+            # Get our output for the current actor given our log
+            # probabilities
+            current_action_distributions = self.actor(observations)
+            current_actions = current_action_distributions.sample()
+            current_log_probabilities = current_action_distributions.log_prob(
+                current_actions
+            )
 
-        # Now we do a training step for the critic
+            # We are calculating the ratio as defined by:
+            #
+            #   π_θ(a_t | s_t)
+            #   --------------
+            #   π_θ_k(a_t | s_t)
+            # Where our originaly utilized log probabilities are
+            # π_θ_k and our current model is creating π_θ. We
+            # use the log probabilities and subtract, then raise
+            # e to the power of the results to simplify the math
+            # for back propagation/gradient descent.
+            # Note that we have a log probability matrix of shape
+            # (batch size, number of actions), where we're expecting
+            # (batch size, 1). We sum our logs as the log(A + B) =
+            # log(A) + log(B).
+            log_probabilities = Tensor(log_probabilities)
+            log_probabilities = torch.sum(log_probabilities, dim=-1)
+            current_log_probabilities = torch.sum(current_log_probabilities, dim=-1)
+            ratio = torch.exp(current_log_probabilities - log_probabilities)
 
-        # Calculate what the critic current evaluates our states as.
-        # First we have the critic evaluate all observation states,
-        # then compare it ot the collected rewards over that time.
-        # We will convert our rewards into a known tensor
-        V = self.critic(observations)
-        reward_tensor = Tensor(rewards).unsqueeze(-1)
-        critic_loss = MSELoss()(V, reward_tensor)
+            # Now we calculate the actor loss for this step
+            actor_loss = -torch.min(
+                ratio * normalized_advantage,
+                torch.clamp(ratio, 1 - self.state.ε, 1 + self.state.ε)
+                * normalized_advantage,
+            ).mean()
 
-        self.critic_optimizer.zero_grad()
-        critic_loss.backward()
-        self.critic_optimizer.step()
+            self.actor_optimizer.zero_grad()
+            actor_loss.backward()
+            self.actor_optimizer.step()
 
-        return actor_loss.item(), critic_loss.item()
+            # Now we do a training step for the critic
+
+            # Calculate what the critic current evaluates our states as.
+            # First we have the critic evaluate all observation states,
+            # then compare it ot the collected rewards over that time.
+            # We will convert our rewards into a known tensor
+            V = self.critic(observations)
+            reward_tensor = Tensor(rewards).unsqueeze(-1)
+            critic_loss = MSELoss()(V, reward_tensor)
+
+            self.critic_optimizer.zero_grad()
+            critic_loss.backward()
+            self.critic_optimizer.step()
 
     def train(self):
         """
@@ -250,10 +268,14 @@ class Trainer:
 
             # Now that we've performed sufficient exploration, run
             # a certain amount of taining steps
-            n = 1
-            for i in range(1):  # todo make singular parameter
-                self.current_action = f"Training Step {i+1} of {n}"
-                actor_loss, critic_loss = self.training_step()
-                self.print_status()
+            self.current_action = "Training"
+            self.print_status()
+            self.training_step()
 
-            # TODO - save regularly
+            if self.state.completed_epochs + 1 % self.state.save_every_epochs:
+                self.current_action = "Saving"
+                self.print_status()
+                self.save()
+
+        print("")
+        print("Training complete!")

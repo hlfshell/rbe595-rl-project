@@ -33,8 +33,6 @@ class TrainingState:
         max_observation_memory: int = 100_000,
         episode_timestep_max: int = 10,
         timesteps_per_batch: int = 100,
-        actor_epochs_per_batch: int = 5,
-        critic_epochs_per_batch: int = 5,
         save_every_epochs: int = 5,
     ):
         # ================
@@ -67,12 +65,6 @@ class TrainingState:
 
         # How long will we let each episode run before terminating?
         self.episode_timestep_max = episode_timestep_max
-
-        # How many epochs do we train the actor and critic
-        # during each epoch. Each epoch for a given batch is
-        # actually iterated on multiple times.
-        self.actor_epochs_per_batch = actor_epochs_per_batch
-        self.critic_epochs_per_batch = critic_epochs_per_batch
 
         # rewards_all tracks all end of episode rewards for all
         # time, outside of our batch memory, for tracking progress
@@ -189,7 +181,9 @@ class TrainingState:
             self.rewards[start:end],
         )
 
-    def get_batch(self) -> Tuple[np.array, np.array, np.array, np.array]:
+    def get_batch(
+        self, offset: int = 0
+    ) -> Tuple[np.array, np.array, np.array, np.array]:
         """
         get_batch retrieves a batch of data from our memory
         preserving grouping of episodes until the cutoff batch size
@@ -201,14 +195,12 @@ class TrainingState:
         rewards: List[np.ndarray] = []
 
         batch_timesteps = 0
-        chosen_episodes = []
+        episode_index = offset
         while batch_timesteps < self.timesteps_per_batch:
-            # Get a random episode
-            episode_index = randint(0, len(self.episode_lengths) - 1)
-            # Ensure that we don't choose the same episode twice
-            if episode_index in chosen_episodes:
-                continue
-            chosen_episodes.append(episode_index)
+            # If we are requesting a batch beyond what
+            # we have, then it's time to just end
+            if episode_index >= len(self.episode_lengths):
+                break
 
             # Get the episode
             obs, acts, log_probs, rwds = self.get_episode(episode_index)
@@ -222,6 +214,8 @@ class TrainingState:
             # The timesteps in the episode is the length of
             # any of its datums
             batch_timesteps += len(obs)
+
+            episode_index += 1
 
         # Trim the batch if necessary - due to the way we
         # compiled the batch we should only need to trim the
@@ -294,8 +288,6 @@ class TrainingState:
             "λ": self.λ,
             "ε": self.ε,
             "α": self.α,
-            "actor_epochs_per_batch": self.actor_epochs_per_batch,
-            "critic_epochs_per_batch": self.critic_epochs_per_batch,
         }
 
         # Ensure the path exists with appropriate subdirectories
@@ -323,8 +315,6 @@ class TrainingState:
             data["max_memory"],
             data["episode_timestep_max"],
             data["timesteps_per_batch"],
-            data["actor_epochs_per_batch"],
-            data["critic_epochs_per_batch"],
             data["save_every_epochs"],
         )
 
