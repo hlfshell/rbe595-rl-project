@@ -40,7 +40,7 @@ class Trainer:
         self.max_timesteps_per_episode = max_timesteps_per_episode
         self.timesteps_per_batch = timesteps_per_batch
         self.save_every_x_timesteps = save_every_x_timesteps
-        
+
         # Hyperparameters
         self.γ = γ
         self.ε = ε
@@ -48,17 +48,13 @@ class Trainer:
         self.training_cycles_per_batch = training_cycles_per_batch
 
         # Memory
-        self.terminal_rewards: List[float] = []
+        self.total_rewards: List[float] = []
         self.terminal_timesteps: List[int] = []
         self.actor_losses: List[float] = []
         self.critic_losses: List[float] = []
 
-        self.actor_optimizer = torch.optim.Adam(
-            self.actor.parameters(), lr=self.α
-        )
-        self.critic_optimizer = torch.optim.Adam(
-            self.critic.parameters(), lr=self.α
-        )
+        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=self.α)
+        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=self.α)
 
         # Initialize some status tracking memory
         self.previous_print_length: int = 0
@@ -72,16 +68,17 @@ class Trainer:
         avg_actor_loss = 0.0
         latest_critic_loss = 0.0
         avg_critic_loss = 0.0
+        avg_count = -3 * self.training_cycles_per_batch
 
-        if len(self.terminal_rewards) > 0:
-            latest_reward = self.terminal_rewards[-1]
-            average_reward = np.mean(self.terminal_rewards[-100:])
-        
+        if len(self.total_rewards) > 0:
+            latest_reward = self.total_rewards[-1]
+            average_reward = np.mean(self.total_rewards[avg_count:])
+
         if len(self.actor_losses) > 0:
             latest_actor_loss = self.actor_losses[-1]
-            avg_actor_loss = np.mean(self.actor_losses[-100:])
+            avg_actor_loss = np.mean(self.actor_losses[-avg_count:])
             latest_critic_loss = self.critic_losses[-1]
-            avg_critic_loss = np.mean(self.critic_losses[-100:])
+            avg_critic_loss = np.mean(self.critic_losses[-avg_count:])
 
         # msg = (
         #     f"Epoch {self.state.epochs_completed + 1} | {self.current_action} | "
@@ -91,10 +88,10 @@ class Trainer:
 
         # print(" " * self.previous_print_length, file=sys.stderr, end="\r")
         # print(msg, end="\r")
-        msg = f'''
+        msg = f"""
             =========================================
             Timesteps: {self.current_timestep:,} / {self.timesteps:,} ({round(self.current_timestep/self.timesteps, 4)*100}%)
-            Episodes: {len(self.terminal_rewards)}
+            Episodes: {len(self.total_rewards)}
             Currently: {self.current_action}
             Latest Reward: {round(latest_reward)}
             Latest Avg Rewards: {round(average_reward)}
@@ -103,7 +100,7 @@ class Trainer:
             Latest Critic Loss: {round(latest_critic_loss, 4)}
             Avg Critic Loss: {round(avg_critic_loss, 4)}
             =========================================
-        '''
+        """
 
         print(msg, file=sys.stderr)
         # self.previous_print_length = len(msg)
@@ -164,15 +161,13 @@ class Trainer:
                 terminated = True
 
             if terminated:
-                # Penalize for each timestep
-                rewards[-1] -= timesteps
                 break
 
         # Calculate the discounted rewards for this episode
-        discounted_rewards = self.calculate_discounted_rewards(rewards)
+        discounted_rewards: List[float] = self.calculate_discounted_rewards(rewards)
 
         # Get the terminal reward and record it for status tracking
-        self.terminal_rewards.append(discounted_rewards[-1])
+        self.total_rewards.append(sum(rewards))
 
         return observations, actions, log_probabilities, discounted_rewards
 
@@ -210,9 +205,7 @@ class Trainer:
 
         # Now we need to calculate our advantage and normalize it
         advantage = Tensor(np.array(rewards, dtype="float32")) - V
-        normalized_advantage = (advantage - advantage.mean()) / (
-            advantage.std() + 1e-8
-        )
+        normalized_advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
 
         # Get our output for the current actor given our log
         # probabilities
@@ -244,8 +237,7 @@ class Trainer:
         # Now we calculate the actor loss for this step
         actor_loss = -torch.min(
             ratio * normalized_advantage,
-            torch.clamp(ratio, 1 - self.ε, 1 + self.ε)
-            * normalized_advantage,
+            torch.clamp(ratio, 1 - self.ε, 1 + self.ε) * normalized_advantage,
         ).mean()
 
         self.actor_optimizer.zero_grad()
@@ -288,11 +280,11 @@ class Trainer:
                 observations += obs
                 log_probabilities += log_probs
                 rewards += rwds
-                
+
                 # Increment our count of timesteps
                 self.current_timestep += len(obs)
 
-                self.print_status()            
+                self.print_status()
 
             # We need to trim the batch memory to the batch size
             observations = observations[: self.timesteps_per_batch]
@@ -306,14 +298,21 @@ class Trainer:
 
             # Perform our training steps
             for c in range(self.training_cycles_per_batch):
-                self.current_action = f"Training Cycle {c+1}/{self.training_cycles_per_batch}"
+                self.current_action = (
+                    f"Training Cycle {c+1}/{self.training_cycles_per_batch}"
+                )
                 self.print_status()
-                actor_loss, critic_loss = self.training_step(observations, log_probabilities, rewards)
+                actor_loss, critic_loss = self.training_step(
+                    observations, log_probabilities, rewards
+                )
                 self.actor_losses.append(actor_loss)
                 self.critic_losses.append(critic_loss)
 
             # Every X timesteps, save our current status
-            if self.current_timestep - self.save_every_x_timesteps >= self.save_every_x_timesteps:
+            if (
+                self.current_timestep - self.save_every_x_timesteps
+                >= self.save_every_x_timesteps
+            ):
                 self.current_action = "Saving"
                 self.print_status()
                 self.save("training")
