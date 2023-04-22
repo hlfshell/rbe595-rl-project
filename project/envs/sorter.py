@@ -56,10 +56,6 @@ class SorterTask(Task):
 
         self.score: float = 0.0
 
-        # self.initial_steps: int = 100
-        # self.steps_remaining = self.initial_steps
-        # self.steps_sort_extension = 10
-
         self.objects_count: int = objects_count
         if observation_type == OBSERVATION_IMAGE:
             self.img_size = img_size
@@ -310,8 +306,8 @@ class SorterTask(Task):
         # Generate new objects
         self.setup_target_objects()
 
-        self.score = 0
-        # self.steps_remaining = self.initial_steps
+        # Clear our score
+        self.score = 0.0
 
     def get_obs(self) -> np.array:
         """
@@ -320,14 +316,9 @@ class SorterTask(Task):
         which, depending on the observation type, will be:
             OBSERVATION_POSES: will be a series of values. See _get_obs_poses
                 for an explanation of this output.
-            OBSERVATION_IMAGE: will be the simulation render from the camera angle.
+            OBSERVATION_IMAGE: will be the simulation render from the camera
+                angle.
         """
-        # Decrement our steps so that we can timeout if this takes
-        # too long
-        # self.steps_remaining -= 1
-        # Every step forward gets a penalty for time
-        # self.score += STEP_PENALTY
-
         # First check for floor collisions. Remove any colliding objects.
         floor_id = self.sim._bodies_idx["plane"]
         for object_key in self.goal:
@@ -357,8 +348,6 @@ class SorterTask(Task):
                         self.score += SORT_REWARD
                     else:
                         self.score += WRONG_SORT_REWARD
-
-                    # self.steps_remaining += self.steps_sort_extension
 
         # Ensure that each goal hasn't moved; this is a consequence of the
         # collision checking we do
@@ -521,8 +510,6 @@ class SorterTask(Task):
 
         It is not an indication of success
         """
-        # if self.steps_remaining <= 0:
-        #     return True
 
         return all(obj.removed for obj in self.goal.values())
 
@@ -618,6 +605,25 @@ class SorterEnv(RobotTaskEnv):
 
     def get_obs(self) -> np.ndarray:
         return self.task.get_obs().astype(np.float32)
+
+    def step(
+        self, action: np.ndarray
+    ) -> Tuple[Dict[str, np.ndarray], float, bool, bool, Dict[str, Any]]:
+        score_prior = self.task.score
+        self.robot.set_action(action)
+        self.sim.step()
+        observation = self._get_obs()
+        score_after = self.task.score
+
+        # An episode is terminated iff the agent has reached the target
+        terminated = bool(
+            self.task.is_success(observation["achieved_goal"], self.task.get_goal())
+        )
+        truncated = False
+        info = {"is_success": terminated}
+        step_penalty = -1
+        reward = (score_after - score_prior) + step_penalty
+        return observation, reward, terminated, truncated, info
 
 
 SORTING_ONE = "sorting_one"
