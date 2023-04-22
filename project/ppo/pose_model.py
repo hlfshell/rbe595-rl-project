@@ -261,6 +261,7 @@ class PPOPoseCritic(Module):
         loadfile = torch.load(filepath)
         self.model.load_state_dict(loadfile["model"])
 
+
 class PPOPoseCritic2(Module):
     def __init__(
         self,
@@ -275,7 +276,7 @@ class PPOPoseCritic2(Module):
             )
         self.control_type = control_type
 
-        super(PPOPoseCritic, self).__init__()
+        super(PPOPoseCritic2, self).__init__()
 
         self.__initialize_model__()
 
@@ -294,9 +295,9 @@ class PPOPoseCritic2(Module):
         #     LeakyReLU(),
         #     Linear(32, 1),
         # )
-        self.layer1 = nn.Linear(self.input_size, 64)
+        self.layer1 = nn.Linear(input_size, 64)
         self.layer2 = nn.Linear(64, 64)
-        self.layer3 = nn.Linear(64, self.output_size)
+        self.layer3 = nn.Linear(64, 1)
 
     def forward(self, input: np.ndarray) -> Tensor:
         if isinstance(input, np.ndarray):
