@@ -28,7 +28,8 @@ class Trainer:
         max_timesteps_per_episode: int,
         γ: float = 0.99,
         ε: float = 0.2,
-        α: float = 0.005,
+        # α: float = 0.005,
+        α: float = 0.01,
         training_cycles_per_batch: int = 5,
         save_every_x_timesteps: int = 50_000,
     ):
@@ -47,7 +48,7 @@ class Trainer:
         self.ε = ε
         self.α = α
         self.training_cycles_per_batch = training_cycles_per_batch
-        self.normalize_rewards = False
+        self.normalize_rewards = True
 
         # Memory
         self.total_rewards: List[float] = []
@@ -180,7 +181,7 @@ class Trainer:
         return the memory of the episode with the current
         actor model
         """
-        self.env.reset()
+        observation, _ = self.env.reset()
 
         timesteps = 0
         observations: List[np.ndarray] = []
@@ -191,13 +192,14 @@ class Trainer:
         while True:
             timesteps += 1
 
-            observation = self.env.get_obs()
+            # observation = self.env._get_obs()
+            # observation = self.env.get_obs()
             action_distribution = self.actor(observation)
             action = action_distribution.sample()
             log_probability = action_distribution.log_prob(action).detach().numpy()
             action = action.detach().numpy()
             observation, reward, terminated, _, _ = self.env.step(action)
-            observation = observation["observation"]
+            # observation = observation["observation"]
 
             observations.append(observation)
             actions.append(action)

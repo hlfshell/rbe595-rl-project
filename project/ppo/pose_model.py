@@ -18,7 +18,7 @@ class PPOPoseActor(Module):
     ):
         self.objects_spawned = objects_spawned
 
-        if control_type not in ["ee", "joint"]:
+        if control_type not in ["ee", "joint", "pendulum"]:
             raise Exception(
                 'Control type must be specified as either "ee" or "joint" control'
             )
@@ -35,12 +35,17 @@ class PPOPoseActor(Module):
 
         # Determine our input size. It is defined by the number of spanwed objects
         # at the start. Ultimately, it is # of (objects * 18) + 13
-        self.input_size = (self.objects_spawned * 18) + 13
+        if self.control_type == "pendulum":
+            self.input_size = 3
+        else:
+            self.input_size = (self.objects_spawned * 18) + 13
 
         # Determine our output size
         if self.control_type == "ee":
             # We have 4 outputs - xyz and gripper torque
             self.output_size = 4
+        elif self.control_type == "pendulum":
+            self.output_size = 1
         else:
             # We have 8 outputs - torques for each of 7 joints and the gripper
             self.output_size = 8
@@ -97,7 +102,7 @@ class PPOPoseCritic(Module):
     ):
         self.objects_spawned = objects_spawned
 
-        if control_type not in ["ee", "joint"]:
+        if control_type not in ["ee", "joint", "pendulum"]:
             raise Exception(
                 'Control type must be specified as either "ee" or "joint" control'
             )
@@ -111,7 +116,10 @@ class PPOPoseCritic(Module):
         # Our score can be unbounded as a value from
         # some -XXX, +XXX, so we don't scale it w/ an activation
         # function
-        input_size = (self.objects_spawned * 18) + 13
+        if self.control_type == "pendulum":
+            input_size = 3
+        else:
+            input_size = (self.objects_spawned * 18) + 13
 
         self.model = Sequential(
             Linear(input_size, 128),
