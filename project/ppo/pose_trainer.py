@@ -47,6 +47,7 @@ class Trainer:
         self.ε = ε
         self.α = α
         self.training_cycles_per_batch = training_cycles_per_batch
+        self.normalize_rewards = False
 
         # Memory
         self.total_rewards: List[float] = []
@@ -76,9 +77,12 @@ class Trainer:
         if len(self.total_rewards) > 0:
             latest_reward = self.total_rewards[-1]
             average_reward = np.mean(self.total_rewards[avg_count:])
-            best_reward = max(self.total_rewards[::-1])
-            best_reward_episodes_since = len(self.total_rewards) - \
-                (self.total_rewards[::-1].index(best_reward)+1)
+            best_reward = max(self.total_rewards)
+            best_reward_episodes_since = (
+                len(self.total_rewards)
+                - self.total_rewards[::-1].index(best_reward)
+                - 1
+            )
 
         if len(self.actor_losses) > 0:
             latest_actor_loss = self.actor_losses[-1]
@@ -137,7 +141,7 @@ class Trainer:
             "critic_losses": self.critic_losses,
         }
         pickle.dump(data, open(f"{directory}/state.data", "wb"))
-        
+
     def load(self, directory: str):
         """
         Load will load the models, state, and any additional
@@ -208,6 +212,13 @@ class Trainer:
 
         # Calculate the discounted rewards for this episode
         discounted_rewards: List[float] = self.calculate_discounted_rewards(rewards)
+
+        # Normalize the discounted rewards
+        if self.normalize_rewards:
+            discounted_rewards = list(
+                (discounted_rewards - np.mean(discounted_rewards))
+                / (np.std(discounted_rewards) + 1e-8)
+            )
 
         # Get the terminal reward and record it for status tracking
         self.total_rewards.append(sum(rewards))
