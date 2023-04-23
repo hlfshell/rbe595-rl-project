@@ -1,4 +1,5 @@
 from __future__ import annotations
+import pickle
 from project.ppo.pose_model import PPOPoseActor, PPOPoseCritic
 from panda_gym.envs.core import RobotTaskEnv
 from torch.distributions import Normal
@@ -64,6 +65,8 @@ class Trainer:
     def print_status(self):
         latest_reward = 0.0
         average_reward = 0.0
+        best_reward = 0.0
+        best_reward_episodes_since = 0
         latest_actor_loss = 0.0
         avg_actor_loss = 0.0
         latest_critic_loss = 0.0
@@ -73,6 +76,9 @@ class Trainer:
         if len(self.total_rewards) > 0:
             latest_reward = self.total_rewards[-1]
             average_reward = np.mean(self.total_rewards[avg_count:])
+            best_reward = max(self.total_rewards[::-1])
+            best_reward_episodes_since = len(self.total_rewards) - \
+                (self.total_rewards[::-1].index(best_reward)+1)
 
         if len(self.actor_losses) > 0:
             latest_actor_loss = self.actor_losses[-1]
@@ -95,6 +101,7 @@ class Trainer:
             Currently: {self.current_action}
             Latest Reward: {round(latest_reward)}
             Latest Avg Rewards: {round(average_reward)}
+            Best Reward: {round(best_reward)} - {best_reward_episodes_since} episodes ago
             Latest Actor Loss: {round(latest_actor_loss, 4)}
             Avg Actor Loss: {round(avg_actor_loss, 4)}
             Latest Critic Loss: {round(latest_critic_loss, 4)}
@@ -112,20 +119,56 @@ class Trainer:
         """
         self.actor.save(f"{directory}/actor.pth")
         self.critic.save(f"{directory}/critic.pth")
-        # TODO - save state/progress
 
-    @staticmethod
-    def Load(directory: str) -> Trainer:
+        # Now save the trainer's state data
+        data = {
+            "timesteps": self.timesteps,
+            "current_timestep": self.current_timestep,
+            "max_timesteps_per_episode": self.max_timesteps_per_episode,
+            "timesteps_per_batch": self.timesteps_per_batch,
+            "save_every_x_timesteps": self.save_every_x_timesteps,
+            "γ": self.γ,
+            "ε": self.ε,
+            "α": self.α,
+            "training_cycles_per_batch": self.training_cycles_per_batch,
+            "total_rewards": self.total_rewards,
+            "terminal_timesteps": self.terminal_timesteps,
+            "actor_losses": self.actor_losses,
+            "critic_losses": self.critic_losses,
+        }
+        pickle.dump(data, open(f"{directory}/state.data", "wb"))
+        
+    def load(self, directory: str):
         """
         Load will load the models, state, and any additional
         data from the given directory
         """
-        print(f"... Loading models and state from {directory} ...")
-        actor = PPOPoseActor.Load(f"{directory}/actor.pth")
-        critic = PPOPoseCritic.Load(f"{directory}/critic.pth")
-        # TODO - load state/progress
+        # Load our models first; they're the simplest
+        self.actor.load(f"{directory}/actor.pth")
+        self.critic.load(f"{directory}/critic.pth")
 
-        # return Trainer(state.env, actor, critic, state)
+        data = pickle.load(open(f"{directory}/state.data", "rb"))
+
+        self.timesteps = data["timesteps"]
+        self.current_timestep = data["current_timestep"]
+        self.max_timesteps_per_episode = data["max_timesteps_per_episode"]
+        self.timesteps_per_batch = data["timesteps_per_batch"]
+        self.save_every_x_timesteps = data["save_every_x_timesteps"]
+
+        # Hyperparameters
+        self.γ = data["γ"]
+        self.ε = data["ε"]
+        self.α = data["α"]
+        self.training_cycles_per_batch = data["training_cycles_per_batch"]
+
+        # Memory
+        self.total_rewards = data["total_rewards"]
+        self.terminal_timesteps = data["terminal_timesteps"]
+        self.actor_losses = data["actor_losses"]
+        self.critic_losses = data["critic_losses"]
+
+        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=self.α)
+        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=self.α)
 
     def rollout(self) -> EpisodeMemory:
         """
@@ -220,8 +263,9 @@ class Trainer:
         #   π_θ(a_t | s_t)
         #   --------------
         #   π_θ_k(a_t | s_t)
-        # Where our originaly utilized log probabilities are
-        # π_θ_k and our current model is creating π_θ. We
+        #
+        # ...where our originaly utilized log probabilities
+        # are π_θ_k and our current model is creating π_θ. We
         # use the log probabilities and subtract, then raise
         # e to the power of the results to simplify the math
         # for back propagation/gradient descent.
