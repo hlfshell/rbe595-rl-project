@@ -26,10 +26,10 @@ class Trainer:
         timesteps: int,
         timesteps_per_batch: int,
         max_timesteps_per_episode: int,
-        γ: float = 0.99,
+        γ: float = 0.95, #was.99
         ε: float = 0.2,
-        # α: float = 0.005,
-        α: float = 0.01,
+        α: float = 0.0003,
+        #α: float = 0.01,
         training_cycles_per_batch: int = 5,
         save_every_x_timesteps: int = 50_000,
     ):
@@ -48,7 +48,7 @@ class Trainer:
         self.ε = ε
         self.α = α
         self.training_cycles_per_batch = training_cycles_per_batch
-        self.normalize_rewards = True
+        self.normalize_rewards = False #was True
 
         # Memory
         self.total_rewards: List[float] = []
@@ -191,7 +191,7 @@ class Trainer:
 
         while True:
             timesteps += 1
-
+            observations.append(observation)
             # observation = self.env._get_obs()
             # observation = self.env.get_obs()
             action_distribution = self.actor(observation)
@@ -201,7 +201,7 @@ class Trainer:
             observation, reward, terminated, _, _ = self.env.step(action)
             # observation = observation["observation"]
 
-            observations.append(observation)
+            #observations.append(observation)
             actions.append(action)
             log_probabilities.append(log_probability)
             rewards.append(reward)
@@ -248,6 +248,8 @@ class Trainer:
         observations: Tensor,
         log_probabilities: Tensor,
         rewards: Tensor,
+        normalized_advantage,
+        actions:Tensor,
     ) -> Tuple[float, float]:
         """
         training_step will perform a single epoch of training for the
@@ -257,19 +259,18 @@ class Trainer:
         """
         # For our given batch we need to get the current estimated
         # value of our given states for our critic, V
-        V = self.critic(observations).detach().squeeze()
-
-        # Now we need to calculate our advantage and normalize it
-        advantage = Tensor(np.array(rewards, dtype="float32")) - V
-        normalized_advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
+        #V = self.critic(observations).detach().squeeze()
+        # V = self.critic(observations).squeeze().detach()
+        # # Now we need to calculate our advantage and normalize it
+        # advantage = Tensor(np.array(rewards, dtype="float32")) - V
+        # normalized_advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
 
         # Get our output for the current actor given our log
         # probabilities
+        V=self.critic(observations).squeeze()
         current_action_distributions = self.actor(observations)
-        current_actions = current_action_distributions.sample()
-        current_log_probabilities = current_action_distributions.log_prob(
-            current_actions
-        )
+        #current_actions = current_action_distributions.sample()
+        current_log_probabilities = current_action_distributions.log_prob(actions)
 
         # We are calculating the ratio as defined by:
         #
@@ -308,7 +309,7 @@ class Trainer:
         # then compare it ot the collected rewards over that time.
         # We will convert our rewards into a known tensor
         V = self.critic(observations)
-        reward_tensor = Tensor(rewards).unsqueeze(-1)
+        reward_tensor = Tensor(rewards)#.unsqueeze(-1)
         critic_loss = MSELoss()(V, reward_tensor)
 
         self.critic_optimizer.zero_grad()
@@ -329,14 +330,16 @@ class Trainer:
             observations: List[np.ndarray] = []
             log_probabilities: List[float] = []
             rewards: List[float] = []
+            actions:List[float]=[]
 
             while len(observations) < self.timesteps_per_batch:
                 self.current_action = "Rollout"
-                obs, _, log_probs, rwds = self.rollout()
+                obs, acts, log_probs, rwds = self.rollout()
                 # Combine these arrays into our overall batch
                 observations += obs
                 log_probabilities += log_probs
                 rewards += rwds
+                actions+= acts
 
                 # Increment our count of timesteps
                 self.current_timestep += len(obs)
@@ -347,11 +350,18 @@ class Trainer:
             observations = observations[: self.timesteps_per_batch]
             log_probabilities = log_probabilities[: self.timesteps_per_batch]
             rewards = rewards[: self.timesteps_per_batch]
+            actions=actions[: self.timesteps_per_batch]
 
             # Finally, convert these to numpy arrays and then to tensors
             observations = Tensor(np.array(observations, dtype=np.float32))
             log_probabilities = Tensor(np.array(log_probabilities, dtype=np.float32))
             rewards = Tensor(np.array(rewards, dtype=np.float32))
+            actions = Tensor(np.array(actions, dtype=np.float32))
+
+            V = self.critic(observations).squeeze().detach()
+            # Now we need to calculate our advantage and normalize it
+            advantage = Tensor(np.array(rewards, dtype="float32")) - V
+            normalized_advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
 
             # Perform our training steps
             for c in range(self.training_cycles_per_batch):
@@ -360,7 +370,7 @@ class Trainer:
                 )
                 self.print_status()
                 actor_loss, critic_loss = self.training_step(
-                    observations, log_probabilities, rewards
+                    observations, log_probabilities, rewards, normalized_advantage,actions,
                 )
                 self.actor_losses.append(actor_loss)
                 self.critic_losses.append(critic_loss)

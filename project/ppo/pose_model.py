@@ -2,7 +2,7 @@ import torch
 from torch import Tensor
 from torch.distributions import Normal, MultivariateNormal
 from torch.nn import Sequential, Module, Linear
-from torch.nn import Tanh, LeakyReLU, Softmax
+from torch.nn import Tanh, LeakyReLU, Softmax, ReLU
 import numpy as np
 from torch import nn
 import torch.nn.functional as F
@@ -53,19 +53,24 @@ class PPOPoseActor(Module):
         # Create our model head - input -> some output layer before splitting to
         # different outputs for mu and sigma
         self.model = Sequential(
-            Linear(self.input_size, 1024),
-            LeakyReLU(),
-            Linear(1024, 512),
-            LeakyReLU(),
-            Linear(512, 256),
-            LeakyReLU(),
-            Linear(256, 128),
-            LeakyReLU(),
-            Linear(128, 64),
-            LeakyReLU(),
-            Linear(64, 32),
-            LeakyReLU(),
-            Linear(32, self.output_size),
+            # Linear(self.input_size, 1024),
+            # LeakyReLU(),
+            # Linear(1024, 512),
+            # LeakyReLU(),
+            # Linear(512, 256),
+            # LeakyReLU(),
+            # Linear(256, 128),
+            # LeakyReLU(),
+            # Linear(128, 64),
+            # LeakyReLU(),
+            # Linear(64, 32),
+            # LeakyReLU(),
+            # Linear(32, self.output_size),
+            Linear(self.input_size, 64),
+            ReLU(),
+            Linear(64, 64),
+            ReLU(),
+            Linear(64, self.output_size),
         )
         self.cov_var = torch.full(size=(self.output_size,), fill_value=0.5)
         self.cov_mat = torch.diag(self.cov_var)
@@ -122,13 +127,18 @@ class PPOPoseCritic(Module):
             input_size = (self.objects_spawned * 18) + 13
 
         self.model = Sequential(
-            Linear(input_size, 128),
-            LeakyReLU(),
-            Linear(128, 64),
-            LeakyReLU(),
-            Linear(64, 32),
-            LeakyReLU(),
-            Linear(32, 1),
+            # Linear(input_size, 128),
+            # LeakyReLU(),
+            # Linear(128, 64),
+            # LeakyReLU(),
+            # Linear(64, 32),
+            # LeakyReLU(),
+            # Linear(32, 1),
+            Linear(input_size, 64),
+            ReLU(),
+            Linear(64, 64),
+            ReLU(),
+            Linear(64, 1),
         )
 
     def forward(self, input: np.ndarray) -> Tensor:

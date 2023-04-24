@@ -6,7 +6,7 @@ from project.ppo.pose_model import (
 
 import gymnasium as gym
 
-env = gym.make('Pendulum-v1', render_mode="human")
+env = gym.make('Pendulum-v1') #, render_mode="human")
 
 actor = PPOPoseActor(5, "pendulum")
 critic = PPOPoseCritic(5, "pendulum")
@@ -16,8 +16,8 @@ trainer = Trainer(
     actor,
     critic,
     timesteps=200_000_000,
-    timesteps_per_batch=500,
-    max_timesteps_per_episode=100,
+    timesteps_per_batch=2048,
+    max_timesteps_per_episode=200,
 )
 
 trainer.train()
