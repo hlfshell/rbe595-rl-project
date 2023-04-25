@@ -2,19 +2,13 @@ from __future__ import annotations
 import pickle
 from project.ppo.pose_model import PPOPoseActor, PPOPoseCritic
 from panda_gym.envs.core import RobotTaskEnv
-from torch.distributions import Normal
 from torch import Tensor
 from torch.nn import MSELoss
 import numpy as np
-from project.ppo.pose_memory import TrainingState
 
 import torch
-from pathlib import Path
 from typing import Tuple, List
-from collections import deque
 import sys
-
-import matplotlib.pyplot as plt
 
 EpisodeMemory: Tuple[List[np.array], List[np.array], List[np.array], List[float]]
 
@@ -182,6 +176,8 @@ class Trainer:
         run_episode runs a singular episode and returns the results
         """
         observation, _ = self.env.reset()
+        if isinstance(observation, dict):
+            observation = observation["observation"]
 
         timesteps = 0
         observations: List[np.ndarray] = []
@@ -198,6 +194,8 @@ class Trainer:
             log_probability = action_distribution.log_prob(action).detach().numpy()
             action = action.detach().numpy()
             observation, reward, terminated, _, _ = self.env.step(action)
+            if isinstance(observation, dict):
+                observation = observation["observation"]
 
             actions.append(action)
             log_probabilities.append(log_probability)
