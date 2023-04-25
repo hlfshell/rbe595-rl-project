@@ -95,7 +95,7 @@ class SorterTask(Task):
             SORTING_ONE: np.array([-0.25, -0.2, 0.01]),
             SORTING_TWO: np.array([-0.25, 0.00, 0.01]),
             SORTING_THREE: np.array([-0.25, 0.2, 0.01]),
-            "blocker": np.array([-0.2, 0.0, 0.01]),
+            # "blocker": np.array([-0.2, 0.0, 0.01]),
         }
         self.sim.create_box(
             body_name=SORTING_ONE,
@@ -122,14 +122,14 @@ class SorterTask(Task):
             rgba_color=np.array([0, 0, 1.0, 0.5]),
         )
         # Create the blocking bar
-        self.sim.create_box(
-            body_name="blocker",
-            half_extents=np.array([0.01, 0.3, 0.005]),
-            mass=0.0,
-            ghost=False,
-            position=self.sorter_positions["blocker"],
-            rgba_color=np.array([0.0, 0.0, 0.0, 0.8]),
-        )
+        # self.sim.create_box(
+        #     body_name="blocker",
+        #     half_extents=np.array([0.01, 0.3, 0.005]),
+        #     mass=0.0,
+        #     ghost=False,
+        #     position=self.sorter_positions["blocker"],
+        #     rgba_color=np.array([0.0, 0.0, 0.0, 0.8]),
+        # )
 
     def set_sorter_positions(self):
         """
@@ -621,7 +621,7 @@ class SorterEnv(RobotTaskEnv):
         )
         truncated = False
         info = {"is_success": terminated}
-        step_penalty = -1
+        step_penalty = STEP_PENALTY
         reward = (score_after - score_prior) + step_penalty
         return observation, reward, terminated, truncated, info
 
@@ -643,10 +643,12 @@ CORRECT_SORTS = {
     SORTING_THREE: CUBE,
 }
 
-# STEP_PENALTY = -1
+STEP_PENALTY = -1
 FLOOR_PENALTY = -50
-WRONG_SORT_REWARD = 25
-SORT_REWARD = 100
+# WRONG_SORT_REWARD = 25
+# SORT_REWARD = 100
+WRONG_SORT_REWARD = 200
+SORT_REWARD = 500
 
 OBSERVATION_POSES: int = 0
 OBSERVATION_IMAGE: int = 1
