@@ -52,24 +52,24 @@ class PPOPoseActor(Module):
 
         # Create our model head - input -> some output layer before splitting to
         # different outputs for mu and sigma
-        # self.model = Sequential(
-        #     Linear(self.input_size, 1024),
-        #     LeakyReLU(),
-        #     Linear(1024, 512),
-        #     LeakyReLU(),
-        #     Linear(512, 256),
-        #     LeakyReLU(),
-        #     Linear(256, 128),
-        #     LeakyReLU(),
-        #     Linear(128, 64),
-        #     LeakyReLU(),
-        #     Linear(64, 32),
-        #     LeakyReLU(),
-        #     Linear(32, self.output_size),
-        # )
-        self.layer1 = nn.Linear(self.input_size, 64)
-        self.layer2 = nn.Linear(64, 64)
-        self.layer3 = nn.Linear(64, self.output_size)
+        self.model = Sequential(
+            Linear(self.input_size, 1024),
+            LeakyReLU(),
+            Linear(1024, 512),
+            LeakyReLU(),
+            Linear(512, 256),
+            LeakyReLU(),
+            Linear(256, 128),
+            LeakyReLU(),
+            Linear(128, 64),
+            LeakyReLU(),
+            Linear(64, 32),
+            LeakyReLU(),
+            Linear(32, self.output_size),
+        )
+        # self.layer1 = nn.Linear(self.input_size, 64)
+        # self.layer2 = nn.Linear(64, 64)
+        # self.layer3 = nn.Linear(64, self.output_size)
         self.cov_var = torch.full(size=(self.output_size,), fill_value=0.5)
         self.cov_mat = torch.diag(self.cov_var)
 
@@ -81,12 +81,12 @@ class PPOPoseActor(Module):
         else:
             input_tensor = input
 
-        activation1 = F.relu(self.layer1(input_tensor))
-        activation2 = F.relu(self.layer2(activation1))
-        output = self.layer3(activation2)
+        # activation1 = F.relu(self.layer1(input_tensor))
+        # activation2 = F.relu(self.layer2(activation1))
+        # output = self.layer3(activation2)
 
 		# return output
-        # output = self.model(input_tensor)
+        output = self.model(input_tensor)
 
         distribution: MultivariateNormal = MultivariateNormal(output, self.cov_mat)
 
@@ -129,18 +129,18 @@ class PPOPoseCritic(Module):
         else:
             input_size = (self.objects_spawned * 18) + 13
 
-        # self.model = Sequential(
-        #     Linear(input_size, 128),
-        #     LeakyReLU(),
-        #     Linear(128, 64),
-        #     LeakyReLU(),
-        #     Linear(64, 32),
-        #     LeakyReLU(),
-        #     Linear(32, 1),
-        # )
-        self.layer1 = nn.Linear(input_size, 64)
-        self.layer2 = nn.Linear(64, 64)
-        self.layer3 = nn.Linear(64, 1)
+        self.model = Sequential(
+            Linear(input_size, 128),
+            LeakyReLU(),
+            Linear(128, 64),
+            LeakyReLU(),
+            Linear(64, 32),
+            LeakyReLU(),
+            Linear(32, 1),
+        )
+        # self.layer1 = nn.Linear(input_size, 64)
+        # self.layer2 = nn.Linear(64, 64)
+        # self.layer3 = nn.Linear(64, 1)
 
     def forward(self, input: np.ndarray) -> Tensor:
         if isinstance(input, np.ndarray):
@@ -150,13 +150,13 @@ class PPOPoseCritic(Module):
         else:
             input_tensor = input
 
-        activation1 = F.relu(self.layer1(input_tensor))
-        activation2 = F.relu(self.layer2(activation1))
-        output = self.layer3(activation2)
+        # activation1 = F.relu(self.layer1(input_tensor))
+        # activation2 = F.relu(self.layer2(activation1))
+        # output = self.layer3(activation2)
 
-        return output
+        # return output
 
-        # return self.model(input_tensor)
+        return self.model(input_tensor)
 
     def save(self, filepath: str):
         torch.save({

@@ -10,6 +10,8 @@ import torch
 from typing import Tuple, List
 import sys
 
+import matplotlib.pyplot as plt
+
 EpisodeMemory: Tuple[List[np.array], List[np.array], List[np.array], List[float]]
 
 
@@ -39,13 +41,13 @@ class Trainer:
         self.max_timesteps_per_episode = max_timesteps_per_episode
         self.timesteps_per_batch = timesteps_per_batch
         self.save_every_x_timesteps = save_every_x_timesteps
+        self.last_save = 0
 
         # Hyperparameters
         self.γ = γ
         self.ε = ε
         self.α = α
         self.training_cycles_per_batch = training_cycles_per_batch
-        self.normalize_rewards = False
 
         # Memory
         self.total_rewards: List[float] = []
@@ -113,13 +115,27 @@ class Trainer:
         # environment. Hacky, but effective if paired w/ 1> /dev/null
         print(msg, file=sys.stderr)
 
+    def create_plot(self, filepath: str):
+        episodes = [i+1 for i in range(len(self.total_rewards))]
+        averages = [np.mean(self.total_rewards[:i+1]) for i in range(len(self.total_rewards))]
+        plt.plot(episodes,self.total_rewards, linestyle='None', marker='o', color='green')
+        plt.plot(episodes, averages, linestyle='solid', color='red')
+
+        plt.title("Rewards per episode")
+        plt.ylabel("Reward")
+        plt.xlabel("Episode")
+        plt.savefig(filepath)
+
     def save(self, directory: str):
         """
         save will save the models, state, and any additional
         data to the given directory
         """
+        self.last_save = self.current_timestep
+
         self.actor.save(f"{directory}/actor.pth")
         self.critic.save(f"{directory}/critic.pth")
+        self.create_plot(f"{directory}/rewards.png")
 
         # Now save the trainer's state data
         data = {
@@ -151,6 +167,7 @@ class Trainer:
         data = pickle.load(open(f"{directory}/state.data", "rb"))
 
         self.timesteps = data["timesteps"]
+        self.last_save = self.timesteps
         self.current_timestep = data["current_timestep"]
         self.max_timesteps_per_episode = data["max_timesteps_per_episode"]
         self.timesteps_per_batch = data["timesteps_per_batch"]
@@ -383,7 +400,7 @@ class Trainer:
 
             # Every X timesteps, save our current status
             if (
-                self.current_timestep - self.save_every_x_timesteps
+                self.current_timestep - self.last_save
                 >= self.save_every_x_timesteps
             ):
                 self.current_action = "Saving"
