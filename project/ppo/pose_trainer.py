@@ -26,9 +26,9 @@ class Trainer:
         max_timesteps_per_episode: int,
         γ: float = 0.99,
         ε: float = 0.2,
-        α: float = 0.005,
+        # α: float = 0.005,
         # α: float = 0.01,
-        # α: float = 3e-4,
+        α: float = 3e-4,
         training_cycles_per_batch: int = 5,
         save_every_x_timesteps: int = 50_000,
     ):
@@ -76,20 +76,19 @@ class Trainer:
         if len(self.total_rewards) > 0:
             latest_reward = self.total_rewards[-1]
 
-            last_n_batches = 10
-            avg_count = last_n_batches * self.timesteps_per_batch
-            avg_count = min(avg_count, len(self.total_rewards))
-            average_reward = np.mean(self.total_rewards[-avg_count:])
+            last_n_episodes = 10
+            average_reward = np.mean(self.total_rewards[-last_n_episodes:])
 
             old_average_reward = np.mean(
-                self.total_rewards[-avg_count : -round(avg_count / 2)]
+                self.total_rewards[-last_n_episodes : -round(last_n_episodes / 2)]
             )
-            newer_average_reward = np.mean(self.total_rewards[-round(avg_count / 2) :])
+            newer_average_reward = np.mean(self.total_rewards[-round(last_n_episodes / 2) :])
             recent_change = newer_average_reward - old_average_reward
 
             best_reward = max(self.total_rewards)
 
         if len(self.actor_losses) > 0:
+            avg_count = 3 * self.timesteps_per_batch
             latest_actor_loss = self.actor_losses[-1]
             avg_actor_loss = np.mean(self.actor_losses[-avg_count:])
             latest_critic_loss = self.critic_losses[-1]
@@ -116,10 +115,16 @@ class Trainer:
         print(msg, file=sys.stderr)
 
     def create_plot(self, filepath: str):
+        last_n_episodes = 10
+        
         episodes = [i+1 for i in range(len(self.total_rewards))]
-        averages = [np.mean(self.total_rewards[:i+1]) for i in range(len(self.total_rewards))]
-        plt.plot(episodes,self.total_rewards, linestyle='None', marker='o', color='green')
+        averages = [np.mean(self.total_rewards[i-last_n_episodes:i]) for i in range(len(self.total_rewards))]
+        trend_data = np.polyfit(episodes, self.total_rewards, 1)
+        trendline = np.poly1d(trend_data)
+
+        plt.scatter(episodes, self.total_rewards, color='green')#, linestyle='None', marker='o', color='green')
         plt.plot(episodes, averages, linestyle='solid', color='red')
+        plt.plot(episodes, trendline(episodes), linestyle='--', color='blue')
 
         plt.title("Rewards per episode")
         plt.ylabel("Reward")
@@ -167,8 +172,8 @@ class Trainer:
         data = pickle.load(open(f"{directory}/state.data", "rb"))
 
         self.timesteps = data["timesteps"]
-        self.last_save = self.timesteps
         self.current_timestep = data["current_timestep"]
+        self.last_save = self.current_timestep
         self.max_timesteps_per_episode = data["max_timesteps_per_episode"]
         self.timesteps_per_batch = data["timesteps_per_batch"]
         self.save_every_x_timesteps = data["save_every_x_timesteps"]
