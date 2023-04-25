@@ -32,7 +32,7 @@ class Trainer:
         ε: float = 0.2,
         # α: float = 0.005,
         # α: float = 0.01,
-        α : float = 3e-4,
+        α: float = 3e-4,
         training_cycles_per_batch: int = 5,
         save_every_x_timesteps: int = 50_000,
     ):
@@ -75,23 +75,21 @@ class Trainer:
         avg_actor_loss = 0.0
         latest_critic_loss = 0.0
         avg_critic_loss = 0.0
-        last_n_batches = 10
-        avg_count = last_n_batches * self.training_cycles_per_batch
         recent_change = 0.0
 
         if len(self.total_rewards) > 0:
             latest_reward = self.total_rewards[-1]
 
-            if len(self.total_rewards) > avg_count:
-                average_reward = np.mean(self.total_rewards[-avg_count:])
+            last_n_batches = 10
+            avg_count = last_n_batches * self.timesteps_per_batch
+            avg_count = min(avg_count, len(self.total_rewards))
+            average_reward = np.mean(self.total_rewards[-avg_count:])
 
-                old_average_reward = np.mean(
-                    self.total_rewards[-avg_count:-round(avg_count/2)]
-                )
-                newer_average_reward = np.mean(
-                    self.total_rewards[-round(avg_count/2):]
-                )
-                recent_change - newer_average_reward - old_average_reward
+            old_average_reward = np.mean(
+                self.total_rewards[-avg_count : -round(avg_count / 2)]
+            )
+            newer_average_reward = np.mean(self.total_rewards[-round(avg_count / 2) :])
+            recent_change = newer_average_reward - old_average_reward
 
             best_reward = max(self.total_rewards)
 
@@ -268,7 +266,9 @@ class Trainer:
 
         return discounted_rewards
 
-    def calculate_normalized_advantage(self, observations: Tensor, rewards: Tensor) -> Tensor:
+    def calculate_normalized_advantage(
+        self, observations: Tensor, rewards: Tensor
+    ) -> Tensor:
         """
         calculate_normalized_advantage will calculate the normalized
         advantage of a given batch of episodes
@@ -295,12 +295,10 @@ class Trainer:
 
         Returns the loss for each model at the end of the step
         """
-         # Get our output for the current actor given our log
+        # Get our output for the current actor given our log
         # probabilities
         current_action_distributions = self.actor(observations)
-        current_log_probabilities = current_action_distributions.log_prob(
-            actions
-        )
+        current_log_probabilities = current_action_distributions.log_prob(actions)
 
         # We are calculating the ratio as defined by:
         #
@@ -372,9 +370,15 @@ class Trainer:
                 self.print_status()
 
                 # Calculate our losses
-                normalized_advantage = self.calculate_normalized_advantage(observations, rewards)
+                normalized_advantage = self.calculate_normalized_advantage(
+                    observations, rewards
+                )
                 actor_loss, critic_loss = self.training_step(
-                    observations, actions, log_probabilities, rewards, normalized_advantage
+                    observations,
+                    actions,
+                    log_probabilities,
+                    rewards,
+                    normalized_advantage,
                 )
                 self.actor_losses.append(actor_loss)
                 self.critic_losses.append(critic_loss)
