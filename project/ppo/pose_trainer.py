@@ -26,9 +26,9 @@ class Trainer:
         max_timesteps_per_episode: int,
         γ: float = 0.99,
         ε: float = 0.2,
-        # α: float = 0.005,
+        α: float = 0.005,
         # α: float = 0.01,
-        α: float = 3e-4,
+        # α: float = 3e-4,
         training_cycles_per_batch: int = 5,
         save_every_x_timesteps: int = 50_000,
     ):
