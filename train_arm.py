@@ -1,17 +1,25 @@
 from project.envs.sorter import SorterEnv, OBSERVATION_POSES
 from project.ppo.pose_trainer import Trainer
-from project.ppo.pose_model import (
-    PPOPoseActor,
-    PPOPoseCritic,
+from project.ppo.model import (
+    Actor,
+    Critic,
 )
 
 from os import path
 from pathlib import Path
 
-env = SorterEnv(OBSERVATION_POSES, 5, render_mode="rgb_array", renderer="Tiny")
+env = SorterEnv(
+    OBSERVATION_POSES,
+    3,
+    # render_mode="human",
+    # renderer="OpenGL",
+    render_mode="rgb_array",
+    renderer="Tiny",
+    blocker_bar=True,
+)
 
-actor = PPOPoseActor(5, "ee")
-critic = PPOPoseCritic(5, "ee")
+actor = Actor(env)
+critic = Critic(env)
 
 trainer = Trainer(
     env,

@@ -41,6 +41,7 @@ class SorterTask(Task):
         robot: Panda,
         objects_count: int = 5,
         img_size: Tuple[int, int] = (256, 256),
+        blocker_bar: bool = True,
     ):
         if observation_type not in [OBSERVATION_POSES, OBSERVATION_IMAGE]:
             raise Exception(
@@ -67,6 +68,7 @@ class SorterTask(Task):
         # preset strings (set below) w/ the resulting
         # starting position each goal is expected to be
         self.sorter_positions: Dict[str, np.array] = {}
+        self.blocker_bar = blocker_bar
         self._init_sorting_areas()
 
         # Track each target object as part of our goal
@@ -80,7 +82,7 @@ class SorterTask(Task):
 
     def task_init(self):
         # Create our plane and table for the scenario
-        self.sim.create_table(length=1.1, width=0.8, height=0.4, x_offset=-0.3)
+        self.sim.create_table(length=0.8, width=0.8, height=0.4, x_offset=-0.3)
 
         # These position_limits are where the objects are allowed
         # to spawn. This reads as (x, y), where each axis
@@ -95,8 +97,10 @@ class SorterTask(Task):
             SORTING_ONE: np.array([-0.25, -0.2, 0.01]),
             SORTING_TWO: np.array([-0.25, 0.00, 0.01]),
             SORTING_THREE: np.array([-0.25, 0.2, 0.01]),
-            # "blocker": np.array([-0.2, 0.0, 0.01]),
         }
+        if self.blocker_bar:
+            self.sorter_positions["blocker"] = np.array([-0.2, 0.0, 0.01])
+
         self.sim.create_box(
             body_name=SORTING_ONE,
             half_extents=np.array([0.05, 0.1, 0.01]),
@@ -121,15 +125,16 @@ class SorterTask(Task):
             position=self.sorter_positions[SORTING_THREE],
             rgba_color=np.array([0, 0, 1.0, 0.5]),
         )
-        # Create the blocking bar
-        # self.sim.create_box(
-        #     body_name="blocker",
-        #     half_extents=np.array([0.01, 0.3, 0.005]),
-        #     mass=0.0,
-        #     ghost=False,
-        #     position=self.sorter_positions["blocker"],
-        #     rgba_color=np.array([0.0, 0.0, 0.0, 0.8]),
-        # )
+        if self.blocker_bar:
+            # Create the blocking bar
+            self.sim.create_box(
+                body_name="blocker",
+                half_extents=np.array([0.01, 0.3, 0.005]),
+                mass=0.0,
+                ghost=False,
+                position=self.sorter_positions["blocker"],
+                rgba_color=np.array([0.0, 0.0, 0.0, 0.8]),
+            )
 
     def set_sorter_positions(self):
         """
@@ -552,6 +557,7 @@ class SorterEnv(RobotTaskEnv):
         self,
         observation_type: int,
         objects_count: int = 5,
+        blocker_bar: bool = True,
         render_mode: str = "human",
         control_type: str = "ee",
         renderer: str = "OpenGL",
@@ -572,7 +578,7 @@ class SorterEnv(RobotTaskEnv):
             base_position=np.array([-0.6, 0.0, 0.0]),
             control_type=control_type,
         )
-        task = SorterTask(sim, observation_type, robot, objects_count=objects_count)
+        task = SorterTask(sim, observation_type, robot, objects_count=objects_count, blocker_bar=blocker_bar)
         super().__init__(
             robot,
             task,
