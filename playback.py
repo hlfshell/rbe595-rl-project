@@ -55,6 +55,3 @@ Image.new('RGB', frames[0].size).save(
     duration=FRAME_DELAY*len(frames),
     loop=0,
 )
-
-#  img.save(fp=fp_out, format='GIF', append_images=imgs,
-#              save_all=True, duration=200, loop=0)
