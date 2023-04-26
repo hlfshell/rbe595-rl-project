@@ -3,20 +3,21 @@ from project.ppo.model import Actor
 
 from PIL import Image
 from typing import Dict, List
+from time import sleep
 
 FPS = 32
 FRAME_DELAY = 1.0/FPS
 MAX_EPISODE_LENGTH_SECONDS = 5
 RECORDING_EPISODE_COUNT = 10
-MODEL_PATH = "./training_1_object/actor.pth"
+MODEL_PATH = "./training/actor.pth"
 OUTPUT_FILE = "./playback.gif"
 
 env = SorterEnv(
     OBSERVATION_POSES,
-    1,
+    3,
     render_mode="rgb_array",
     renderer="OpenGL",
-    blocker_bar=False
+    blocker_bar=True
 )
 
 actor = Actor(env)

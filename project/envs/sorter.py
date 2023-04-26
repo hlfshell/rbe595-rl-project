@@ -88,9 +88,17 @@ class SorterTask(Task):
         # to spawn. This reads as (x, y), where each axis
         # in turn is a tuple of min/max placement.
         self.object_position_limits: Tuple[Tuple[float, float]] = (
-            (-0.2, 0.2),
+            (-0.06, 0.06),
             (-0.2, 0.2),
         )
+        # self.sim.create_sphere(
+        #     body_name="marker",
+        #     radius=0.025,
+        #     mass=0.0,
+        #     ghost=True,
+        #     position=(0.06, 0.2, 0.01),
+        #     rgba_color=(255, 255, 0, 1.0),
+        # )
 
     def _init_sorting_areas(self):
         self.sorter_positions = {
