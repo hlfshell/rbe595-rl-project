@@ -76,14 +76,23 @@ class Trainer:
         if len(self.total_rewards) > 0:
             latest_reward = self.total_rewards[-1]
 
-            last_n_episodes = 10
+            last_n_episodes = 100
             average_reward = np.mean(self.total_rewards[-last_n_episodes:])
 
-            old_average_reward = np.mean(
-                self.total_rewards[-last_n_episodes : -round(last_n_episodes / 2)]
+            episodes = [
+                i
+                for i in range(
+                    len(self.total_rewards[-last_n_episodes:]),
+                    min(last_n_episodes, 0),
+                    -1,
+                )
+            ]
+            coefficients = np.polyfit(
+                episodes,
+                self.total_rewards[-last_n_episodes:],
+                1,
             )
-            newer_average_reward = np.mean(self.total_rewards[-round(last_n_episodes / 2) :])
-            recent_change = newer_average_reward - old_average_reward
+            recent_change = coefficients[0]
 
             best_reward = max(self.total_rewards)
 
@@ -96,8 +105,8 @@ class Trainer:
 
         msg = f"""
             =========================================
-            Timesteps: {self.current_timestep:,} / {self.timesteps:,} ({round(self.current_timestep/self.timesteps, 4)*100}%)
-            Episodes: {len(self.total_rewards)}
+            Timesteps: {self.current_timestep:,} / {self.timesteps:,} ({round((self.current_timestep/self.timesteps)*100, 4)}%)
+            Episodes: {len(self.total_rewards):,}
             Currently: {self.current_action}
             Latest Reward: {round(latest_reward)}
             Latest Avg Rewards: {round(average_reward)}
@@ -116,15 +125,20 @@ class Trainer:
 
     def create_plot(self, filepath: str):
         last_n_episodes = 10
-        
-        episodes = [i+1 for i in range(len(self.total_rewards))]
-        averages = [np.mean(self.total_rewards[i-last_n_episodes:i]) for i in range(len(self.total_rewards))]
+
+        episodes = [i + 1 for i in range(len(self.total_rewards))]
+        averages = [
+            np.mean(self.total_rewards[i - last_n_episodes : i])
+            for i in range(len(self.total_rewards))
+        ]
         trend_data = np.polyfit(episodes, self.total_rewards, 1)
         trendline = np.poly1d(trend_data)
 
-        plt.scatter(episodes, self.total_rewards, color='green')#, linestyle='None', marker='o', color='green')
-        plt.plot(episodes, averages, linestyle='solid', color='red')
-        plt.plot(episodes, trendline(episodes), linestyle='--', color='blue')
+        plt.scatter(
+            episodes, self.total_rewards, color="green"
+        )  # , linestyle='None', marker='o', color='green')
+        plt.plot(episodes, averages, linestyle="solid", color="red")
+        plt.plot(episodes, trendline(episodes), linestyle="--", color="blue")
 
         plt.title("Rewards per episode")
         plt.ylabel("Reward")
@@ -404,10 +418,7 @@ class Trainer:
                 self.critic_losses.append(critic_loss)
 
             # Every X timesteps, save our current status
-            if (
-                self.current_timestep - self.last_save
-                >= self.save_every_x_timesteps
-            ):
+            if self.current_timestep - self.last_save >= self.save_every_x_timesteps:
                 self.current_action = "Saving"
                 self.print_status()
                 self.save("training")
