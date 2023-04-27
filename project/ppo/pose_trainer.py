@@ -5,6 +5,7 @@ from panda_gym.envs.core import RobotTaskEnv
 from torch import Tensor
 from torch.nn import MSELoss
 import numpy as np
+from threading import Thread
 
 import torch
 from typing import Tuple, List
@@ -31,6 +32,7 @@ class Trainer:
         α: float = 3e-4,
         training_cycles_per_batch: int = 5,
         save_every_x_timesteps: int = 50_000,
+        simulatenous_threads: int = 8,
     ):
         self.env = env
         self.actor = actor
@@ -42,6 +44,7 @@ class Trainer:
         self.timesteps_per_batch = timesteps_per_batch
         self.save_every_x_timesteps = save_every_x_timesteps
         self.last_save = 0
+        self.simulatenous_threads = simulatenous_threads
 
         # Hyperparameters
         self.γ = γ
@@ -171,6 +174,7 @@ class Trainer:
             "terminal_timesteps": self.terminal_timesteps,
             "actor_losses": self.actor_losses,
             "critic_losses": self.critic_losses,
+            "simulatenous_threads": self.simulatenous_threads,
         }
         pickle.dump(data, open(f"{directory}/state.data", "wb"))
 
@@ -191,6 +195,7 @@ class Trainer:
         self.max_timesteps_per_episode = data["max_timesteps_per_episode"]
         self.timesteps_per_batch = data["timesteps_per_batch"]
         self.save_every_x_timesteps = data["save_every_x_timesteps"]
+        # self.simulatenous_threads = data["simulatenous_threads"]
 
         # Hyperparameters
         self.γ = data["γ"]
@@ -207,11 +212,14 @@ class Trainer:
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=self.α)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=self.α)
 
-    def run_episode(self) -> EpisodeMemory:
+    def run_episode(self, env=None) -> EpisodeMemory:
         """
         run_episode runs a singular episode and returns the results
         """
-        observation, _ = self.env.reset()
+        if env is None:
+            env = self.env
+
+        observation, _ = env.reset()
         if isinstance(observation, dict):
             observation = observation["observation"]
 
@@ -229,7 +237,7 @@ class Trainer:
             action = action_distribution.sample()
             log_probability = action_distribution.log_prob(action).detach().numpy()
             action = action.detach().numpy()
-            observation, reward, terminated, _, _ = self.env.step(action)
+            observation, reward, terminated, _, _ = env.step(action)
             if isinstance(observation, dict):
                 observation = observation["observation"]
 
@@ -246,10 +254,13 @@ class Trainer:
         # Calculate the discounted rewards for this episode
         discounted_rewards: List[float] = self.calculate_discounted_rewards(rewards)
 
-        # Get the terminal reward and record it for status tracking
-        self.total_rewards.append(sum(rewards))
-
-        return observations, actions, log_probabilities, discounted_rewards
+        return (
+            observations,
+            actions,
+            log_probabilities,
+            discounted_rewards,
+            sum(rewards),
+        )
 
     def rollout(self) -> EpisodeMemory:
         """
@@ -275,6 +286,46 @@ class Trainer:
             self.current_timestep += len(obs)
 
             self.print_status()
+
+        # We need to trim the batch memory to the batch size
+        observations = observations[: self.timesteps_per_batch]
+        actions = actions[: self.timesteps_per_batch]
+        log_probabilities = log_probabilities[: self.timesteps_per_batch]
+        rewards = rewards[: self.timesteps_per_batch]
+
+        return observations, actions, log_probabilities, rewards
+
+    def distributed_rollout(self) -> EpisodeMemory:
+        observations: List[np.ndarray] = []
+        log_probabilities: List[float] = []
+        actions: List[float] = []
+        rewards: List[float] = []
+        threads: List[Thread] = []
+
+        self.current_action = "Rollout"
+
+        while len(observations) < self.timesteps_per_batch:
+            env = self.env.clone()
+            for _ in range(self.simulatenous_threads):
+                thread = Thread(target=self.rollout, args=(env,))
+                threads.append(thread)
+                thread.start()
+
+            # Wait for the current set of threads to return
+            for thread in threads:
+                thread.join()
+                (
+                    obs,
+                    chosen_actions,
+                    log_probs,
+                    rwds,
+                    eps_rwd,
+                ) = thread.result()
+                observations += obs
+                actions += chosen_actions
+                log_probabilities += log_probs
+                rewards += rwds
+                self.total_rewards.append(eps_rwd)
 
         # We need to trim the batch memory to the batch size
         observations = observations[: self.timesteps_per_batch]
@@ -388,7 +439,12 @@ class Trainer:
         while self.current_timestep <= self.timesteps:
             # Perform a rollout to get our next training
             # batch
-            observations, actions, log_probabilities, rewards = self.rollout()
+            (
+                observations,
+                actions,
+                log_probabilities,
+                rewards,
+            ) = self.distributed_rollout()
 
             # Finally, convert these to numpy arrays and then to tensors
             observations = Tensor(np.array(observations, dtype=np.float32))

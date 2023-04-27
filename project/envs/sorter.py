@@ -1,3 +1,4 @@
+from __future__ import annotations
 import math
 from math import pi
 from random import choice, uniform
@@ -586,7 +587,13 @@ class SorterEnv(RobotTaskEnv):
             base_position=np.array([-0.6, 0.0, 0.0]),
             control_type=control_type,
         )
-        task = SorterTask(sim, observation_type, robot, objects_count=objects_count, blocker_bar=blocker_bar)
+        task = SorterTask(
+            sim,
+            observation_type,
+            robot,
+            objects_count=objects_count,
+            blocker_bar=blocker_bar,
+        )
         super().__init__(
             robot,
             task,
@@ -600,6 +607,18 @@ class SorterEnv(RobotTaskEnv):
         )
         self.sim.place_visualizer(
             target_position=np.zeros(3), distance=0.9, yaw=45, pitch=-30
+        )
+
+    def clone(self) -> SorterEnv:
+        return SorterEnv(
+            observation_type=self.task.observation_type,
+            objects_count=self.task.objects_count,
+            blocker_bar=self.task.blocker_bar,
+            render_mode=self.sim.render_mode,
+            control_type=self.robot.control_type,
+            renderer=self.sim.renderer,
+            render_width=self.img_size[0],
+            render_height=self.img_size[1],
         )
 
     def reset(self) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
