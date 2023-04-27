@@ -5,7 +5,7 @@ from panda_gym.envs.core import RobotTaskEnv
 from torch import Tensor
 from torch.nn import MSELoss
 import numpy as np
-from threading import Thread
+from concurrent.futures import ThreadPoolExecutor, Future
 
 import torch
 from typing import Tuple, List
@@ -212,12 +212,63 @@ class Trainer:
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=self.α)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=self.α)
 
-    def run_episode(self, env=None) -> EpisodeMemory:
+    # def run_episode(self, env=None) -> EpisodeMemory:
+    #     """
+    #     run_episode runs a singular episode and returns the results
+    #     """
+    #     if env is None:
+    #         env = self.env
+
+    #     observation, _ = env.reset()
+    #     if isinstance(observation, dict):
+    #         observation = observation["observation"]
+
+    #     timesteps = 0
+    #     observations: List[np.ndarray] = []
+    #     actions: List[np.ndarray] = []
+    #     log_probabilities: List[float] = []
+    #     rewards: List[float] = []
+
+    #     while True:
+    #         timesteps += 1
+
+    #         observations.append(observation)
+    #         action_distribution = self.actor(observation)
+    #         action = action_distribution.sample()
+    #         log_probability = action_distribution.log_prob(action).detach().numpy()
+    #         action = action.detach().numpy()
+    #         observation, reward, terminated, _, _ = env.step(action)
+    #         if isinstance(observation, dict):
+    #             observation = observation["observation"]
+
+    #         actions.append(action)
+    #         log_probabilities.append(log_probability)
+    #         rewards.append(reward)
+
+    #         if timesteps >= self.max_timesteps_per_episode:
+    #             terminated = True
+
+    #         if terminated:
+    #             break
+
+    #     # Calculate the discounted rewards for this episode
+    #     discounted_rewards: List[float] = self.calculate_discounted_rewards(rewards)
+
+    #     return (
+    #         observations,
+    #         actions,
+    #         log_probabilities,
+    #         discounted_rewards,
+    #         sum(rewards),
+    #     )
+
+    def run_episode(
+            self,
+            env
+        ) -> EpisodeMemory:
         """
         run_episode runs a singular episode and returns the results
         """
-        if env is None:
-            env = self.env
 
         observation, _ = env.reset()
         if isinstance(observation, dict):
@@ -300,32 +351,45 @@ class Trainer:
         log_probabilities: List[float] = []
         actions: List[float] = []
         rewards: List[float] = []
-        threads: List[Thread] = []
+
+        futures: List[Future] = []
 
         self.current_action = "Rollout"
 
+        envs = []
+        for _ in range(self.simulatenous_threads):
+            envs.append(self.env.clone())
+
+        executor = ThreadPoolExecutor(max_workers=self.simulatenous_threads)
+
         while len(observations) < self.timesteps_per_batch:
-            env = self.env.clone()
-            for _ in range(self.simulatenous_threads):
-                thread = Thread(target=self.rollout, args=(env,))
-                threads.append(thread)
-                thread.start()
+            self.print_status()
+
+            for env in envs:
+                env = self.env.clone()
+                future = executor.submit(self.run_episode, env)
 
             # Wait for the current set of threads to return
-            for thread in threads:
-                thread.join()
+            for future in futures:
+                print("Waiting for future to return", future)
                 (
                     obs,
                     chosen_actions,
                     log_probs,
                     rwds,
                     eps_rwd,
-                ) = thread.result()
+                ) = future.result()
+                print("post future result")
+
                 observations += obs
                 actions += chosen_actions
                 log_probabilities += log_probs
                 rewards += rwds
                 self.total_rewards.append(eps_rwd)
+
+        # Close our environments
+        for env in envs:
+            env.close()
 
         # We need to trim the batch memory to the batch size
         observations = observations[: self.timesteps_per_batch]
