@@ -576,6 +576,10 @@ class SorterEnv(RobotTaskEnv):
         if observation_type not in [OBSERVATION_IMAGE, OBSERVATION_POSES]:
             raise ValueError("observation_type must be one of either images or poses")
 
+        self.renderer = renderer
+        self.render_mode = render_mode
+        self.img_size = (render_width, render_height)
+
         sim = PyBullet(
             render_mode=render_mode,
             background_color=np.array((200, 200, 200)),
@@ -614,9 +618,9 @@ class SorterEnv(RobotTaskEnv):
             observation_type=self.task.observation_type,
             objects_count=self.task.objects_count,
             blocker_bar=self.task.blocker_bar,
-            render_mode=self.sim.render_mode,
+            render_mode=self.render_mode,
             control_type=self.robot.control_type,
-            renderer=self.sim.renderer,
+            renderer=self.renderer,
             render_width=self.img_size[0],
             render_height=self.img_size[1],
         )
