@@ -67,6 +67,7 @@ class Trainer:
         self.last_save: int = 0
 
     def print_status(self):
+        return
         latest_reward = 0.0
         average_reward = 0.0
         best_reward = 0.0
@@ -326,7 +327,7 @@ class Trainer:
 
         while len(observations) < self.timesteps_per_batch:
             self.current_action = "Rollout"
-            obs, chosen_actions, log_probs, rwds = self.run_episode()
+            obs, chosen_actions, log_probs, rwds, _ = self.run_episode(self.env)
             # Combine these arrays into our overall batch
             observations += obs
             actions += chosen_actions
@@ -352,50 +353,81 @@ class Trainer:
         actions: List[float] = []
         rewards: List[float] = []
 
-        futures: List[Future] = []
-
         self.current_action = "Rollout"
 
         envs = []
-        for _ in range(self.simulatenous_threads):
-            envs.append(self.env.clone())
+        # for _ in range(self.simulatenous_threads):
+        #     envs.append(self.env.clone())
 
         executor = ThreadPoolExecutor(max_workers=self.simulatenous_threads)
 
-        while len(observations) < self.timesteps_per_batch:
-            self.print_status()
+        number_of_episodes = round(self.timesteps_per_batch / self.max_timesteps_per_episode)
 
-            for env in envs:
-                env = self.env.clone()
-                future = executor.submit(self.run_episode, env)
+        futures: List[Future] = []
 
-            # Wait for the current set of threads to return
-            for future in futures:
-                print("Waiting for future to return", future)
-                (
-                    obs,
-                    chosen_actions,
-                    log_probs,
-                    rwds,
-                    eps_rwd,
-                ) = future.result()
-                print("post future result")
+        for _ in range(number_of_episodes):
+            env = self.env.clone()
+            envs.append(env)
+            future = executor.submit(self.run_episode, env)
+            futures.append(future)
 
-                observations += obs
-                actions += chosen_actions
-                log_probabilities += log_probs
-                rewards += rwds
-                self.total_rewards.append(eps_rwd)
+        for future in futures:
+            (
+                obs,
+                chosen_actions,
+                log_probs,
+                rwds,
+                eps_rwd,
+            ) = future.result()
+
+            # Increment our count of timesteps
+            self.current_timestep += len(obs)
+
+            observations += obs
+            actions += chosen_actions
+            log_probabilities += log_probs
+            rewards += rwds
+            self.total_rewards.append(eps_rwd)
+
+
+        # while len(observations) < self.timesteps_per_batch:
+        #     self.print_status()
+
+        #     futures: List[Future] = []
+
+        #     for env in envs:
+        #         env = self.env.clone()
+        #         future = executor.submit(self.run_episode, env)
+        #         futures.append(future)
+
+        #     # Wait for the current set of threads to return
+        #     for future in futures:
+        #         (
+        #             obs,
+        #             chosen_actions,
+        #             log_probs,
+        #             rwds,
+        #             eps_rwd,
+        #         ) = future.result()
+
+        #         # Increment our count of timesteps
+        #         self.current_timestep += len(obs)
+
+        #         observations += obs
+        #         actions += chosen_actions
+        #         log_probabilities += log_probs
+        #         rewards += rwds
+        #         self.total_rewards.append(eps_rwd)
 
         # Close our environments
         for env in envs:
             env.close()
 
         # We need to trim the batch memory to the batch size
-        observations = observations[: self.timesteps_per_batch]
-        actions = actions[: self.timesteps_per_batch]
-        log_probabilities = log_probabilities[: self.timesteps_per_batch]
-        rewards = rewards[: self.timesteps_per_batch]
+        # observations = observations[: self.timesteps_per_batch]
+        # actions = actions[: self.timesteps_per_batch]
+        # log_probabilities = log_probabilities[: self.timesteps_per_batch]
+        # rewards = rewards[: self.timesteps_per_batch]
 
         return observations, actions, log_probabilities, rewards
 
