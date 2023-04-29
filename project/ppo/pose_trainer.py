@@ -249,7 +249,7 @@ class Trainer:
         # Get the terminal reward and record it for status tracking
         self.total_rewards.append(sum(rewards))
 
-        return observations, actions, log_probabilities, discounted_rewards
+        return observations, actions, log_probabilities, discounted_rewards, sum(rewards)
 
     def rollout(self) -> EpisodeMemory:
         """
