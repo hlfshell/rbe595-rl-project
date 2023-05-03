@@ -5,6 +5,8 @@ This project is an attempt to learn PPO (Proximal Policy Optimzation) with a com
 
 <img src="imgs/2_objects_approx_300_average.gif">
 
+<img src="imgs/1_with_blocker_average_200.gif">
+
 Files of note:
 
 * `train_arm.py` - with some modification, it will kick off training a configurable environment of the robotic arm
