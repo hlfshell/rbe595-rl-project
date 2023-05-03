@@ -16,6 +16,7 @@ gymnasium==0.27.1
 gymnasium-notices==0.0.1
 isort==5.12.0
 jax-jumpy==0.2.0
+matplotlib==3.7.1
 mccabe==0.7.0
 mypy-extensions==1.0.0
 numpy==1.24.2
